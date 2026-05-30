@@ -127,9 +127,8 @@ def generate_otp() -> str:
     return str(random.randint(100000, 999999))
 
 async def send_otp_email(email: str, otp: str):
+    logger.info(f"===== OTP for {email}: {otp} =====")
     if not SMTP_HOST:
-        logger.info(f"===== OTP for {email}: {otp} =====")
-        logger.info("(set SMTP_HOST/SMTP_USER/SMTP_PASS to send via email)")
         return
     try:
         import aiosmtplib
@@ -147,9 +146,9 @@ async def send_otp_email(email: str, otp: str):
             password=SMTP_PASS,
             start_tls=True,
         )
-        logger.info(f"OTP sent to {email}")
+        logger.info(f"OTP also emailed to {email}")
     except Exception as e:
-        logger.warning(f"SMTP failed for {email}: {e}. OTP {otp} logged instead.")
+        logger.warning(f"SMTP failed: {e}")
 
 # --- Auth endpoints ---
 
