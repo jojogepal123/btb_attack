@@ -15,23 +15,31 @@ export function AuthProvider({ children }) {
     axios.get(`${API_BASE}/api/auth/verify`, {
       headers: { Authorization: `Bearer ${token}` },
     })
-      .then((res) => setUser(res.data.user))
+      .then((res) => setUser({ email: res.data.email, name: res.data.name }))
       .catch(() => { localStorage.removeItem('btb_token'); setToken(null) })
       .finally(() => setLoading(false))
   }, [token])
 
-  const login = async (username, password) => {
-    const res = await axios.post(`${API_BASE}/api/auth/login`, { username, password })
+  const login = async (email, password) => {
+    const res = await axios.post(`${API_BASE}/api/auth/login`, { email, password })
     localStorage.setItem('btb_token', res.data.token)
     setToken(res.data.token)
-    setUser(username)
+    setUser({ email: res.data.email, name: res.data.name })
   }
 
-  const register = async (username, password) => {
-    const res = await axios.post(`${API_BASE}/api/auth/register`, { username, password })
+  const register = async (name, email, password) => {
+    await axios.post(`${API_BASE}/api/auth/register`, { name, email, password })
+  }
+
+  const verifyOtp = async (email, otp) => {
+    const res = await axios.post(`${API_BASE}/api/auth/verify-otp`, { email, otp })
     localStorage.setItem('btb_token', res.data.token)
     setToken(res.data.token)
-    setUser(username)
+    setUser({ email: res.data.email, name: res.data.name })
+  }
+
+  const resendOtp = async (email) => {
+    await axios.post(`${API_BASE}/api/auth/resend-otp`, { email, otp: '' })
   }
 
   const logout = () => {
@@ -41,7 +49,7 @@ export function AuthProvider({ children }) {
   }
 
   return (
-    <AuthContext.Provider value={{ user, token, login, register, logout, loading }}>
+    <AuthContext.Provider value={{ user, token, login, register, verifyOtp, resendOtp, logout, loading }}>
       {children}
     </AuthContext.Provider>
   )

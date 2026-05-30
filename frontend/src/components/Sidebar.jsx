@@ -20,15 +20,19 @@ export default function Sidebar({ onRun, loading, showBrowser, onToggleBrowser }
   const { user, logout } = useAuth()
   const [showRemove, setShowRemove] = useState(false)
   const [containers, setContainers] = useState([])
+  const [containerError, setContainerError] = useState('')
   const [fetching, setFetching] = useState(false)
   const dropdownRef = useRef(null)
 
   useEffect(() => {
     if (!showRemove) return
-    setFetching(true)
+    setFetching(true); setContainerError('')
     axios.get(`${BASE}/api/containers`, { headers: authHeaders() })
-      .then((res) => setContainers(res.data.containers || []))
-      .catch(() => setContainers([]))
+      .then((res) => {
+        setContainers(res.data.containers || [])
+        if (res.data.error) setContainerError(res.data.error)
+      })
+      .catch((err) => { setContainers([]); setContainerError(err.message) })
       .finally(() => setFetching(false))
   }, [showRemove])
 
@@ -82,6 +86,8 @@ export default function Sidebar({ onRun, loading, showBrowser, onToggleBrowser }
             <div className="absolute left-0 right-0 top-full mt-1 bg-gray-800 border border-gray-700 rounded-lg shadow-lg z-10 max-h-48 overflow-y-auto">
               {fetching ? (
                 <p className="px-3 py-2 text-xs text-gray-500">loading...</p>
+              ) : containerError ? (
+                <p className="px-3 py-2 text-xs text-red-400">{containerError}</p>
               ) : containers.length === 0 ? (
                 <p className="px-3 py-2 text-xs text-gray-500">no running containers</p>
               ) : (
@@ -111,7 +117,7 @@ export default function Sidebar({ onRun, loading, showBrowser, onToggleBrowser }
       </nav>
 
       <div className="p-3 border-t border-gray-800 space-y-2">
-        <p className="text-xs text-gray-600 truncate">{user}</p>
+        <p className="text-xs text-gray-600 truncate">{user?.name || user?.email}</p>
         <button onClick={logout} className="text-xs text-red-500 hover:text-red-400 transition">
           logout
         </button>

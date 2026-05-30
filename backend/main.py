@@ -1,4 +1,8 @@
 import os
+import random
+import asyncio
+import logging
+import subprocess
 from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 from fastapi import FastAPI, Query, Header, HTTPException, Depends
@@ -8,9 +12,6 @@ from passlib.context import CryptContext
 from jose import jwt, JWTError
 from pydantic import BaseModel
 from typing import Dict, Optional
-import asyncio
-import logging
-import subprocess
 
 load_dotenv()
 
@@ -18,6 +19,11 @@ MONGO_URL = os.getenv("MONGO_URL", "mongodb://localhost:27017")
 SECRET_KEY = os.getenv("SECRET_KEY", "change-me-in-production")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 1440
+
+SMTP_HOST = os.getenv("SMTP_HOST", "")
+SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+SMTP_USER = os.getenv("SMTP_USER", "")
+SMTP_PASS = os.getenv("SMTP_PASS", "")
 
 VPS_IP = os.getenv("VPS_IP", "127.0.0.1")
 DOCKER_HOST = os.getenv("DOCKER_HOST", "")
@@ -67,27 +73,32 @@ COMMANDS = {
     ),
 }
 
-# --- Auth models ---
+# --- Pydantic models ---
 
 class RegisterRequest(BaseModel):
-    username: str
+    name: str
+    email: str
     password: str
 
 class LoginRequest(BaseModel):
-    username: str
+    email: str
     password: str
+
+class VerifyOtpRequest(BaseModel):
+    email: str
+    otp: str
 
 class RemoveRequest(BaseModel):
     name: str
 
-# --- MongoDB setup ---
+# --- MongoDB ---
 
 @app.on_event("startup")
 async def startup():
     global client, db
     client = AsyncIOMotorClient(MONGO_URL)
     db = client.btb_attack
-    await db.users.create_index("username", unique=True)
+    await db.users.create_index("email", unique=True)
     logger.info(f"Connected to MongoDB at {MONGO_URL}")
 
 @app.on_event("shutdown")
@@ -95,11 +106,11 @@ async def shutdown():
     if client:
         client.close()
 
-# --- Auth helpers ---
+# --- JWT ---
 
-def create_token(username: str) -> str:
+def create_token(email: str) -> str:
     expire = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    return jwt.encode({"sub": username, "exp": expire}, SECRET_KEY, algorithm=ALGORITHM)
+    return jwt.encode({"sub": email, "exp": expire}, SECRET_KEY, algorithm=ALGORITHM)
 
 async def get_current_user(authorization: Optional[str] = Header(None)):
     if not authorization or not authorization.startswith("Bearer "):
@@ -110,29 +121,105 @@ async def get_current_user(authorization: Optional[str] = Header(None)):
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
 
+# --- OTP helpers ---
+
+def generate_otp() -> str:
+    return str(random.randint(100000, 999999))
+
+async def send_otp_email(email: str, otp: str):
+    if not SMTP_HOST:
+        logger.info(f"===== OTP for {email}: {otp} =====")
+        logger.info("(set SMTP_HOST/SMTP_USER/SMTP_PASS to send via email)")
+        return
+    try:
+        import aiosmtplib
+        from email.message import EmailMessage
+        msg = EmailMessage()
+        msg["Subject"] = "BTB Attack — your verification code"
+        msg["From"] = SMTP_USER
+        msg["To"] = email
+        msg.set_content(f"Your OTP is: {otp}\nIt expires in 5 minutes.")
+        await aiosmtplib.send(
+            msg,
+            hostname=SMTP_HOST,
+            port=SMTP_PORT,
+            username=SMTP_USER,
+            password=SMTP_PASS,
+            start_tls=True,
+        )
+        logger.info(f"OTP sent to {email}")
+    except Exception as e:
+        logger.warning(f"SMTP failed for {email}: {e}. OTP {otp} logged instead.")
+
 # --- Auth endpoints ---
 
 @app.post("/api/auth/register")
 async def register(body: RegisterRequest):
-    existing = await db.users.find_one({"username": body.username})
+    if len(body.password) < 4:
+        raise HTTPException(status_code=400, detail="Password too short (min 4 chars)")
+    existing = await db.users.find_one({"email": body.email})
     if existing:
-        raise HTTPException(status_code=400, detail="Username already exists")
+        raise HTTPException(status_code=400, detail="Email already registered")
     hashed = pwd_ctx.hash(body.password)
-    await db.users.insert_one({"username": body.username, "password": hashed})
-    token = create_token(body.username)
-    return {"token": token, "username": body.username}
+    otp = generate_otp()
+    await db.users.insert_one({
+        "name": body.name,
+        "email": body.email,
+        "password": hashed,
+        "verified": False,
+        "otp": otp,
+        "otp_expires": datetime.now(timezone.utc) + timedelta(minutes=5),
+    })
+    await send_otp_email(body.email, otp)
+    return {"message": "OTP sent to email"}
+
+@app.post("/api/auth/verify-otp")
+async def verify_otp(body: VerifyOtpRequest):
+    user = await db.users.find_one({"email": body.email})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if user.get("verified"):
+        raise HTTPException(status_code=400, detail="Already verified")
+    if user.get("otp") != body.otp:
+        raise HTTPException(status_code=400, detail="Invalid OTP")
+    if user.get("otp_expires") and user["otp_expires"].replace(tzinfo=timezone.utc) < datetime.now(timezone.utc):
+        raise HTTPException(status_code=400, detail="OTP expired")
+    await db.users.update_one({"email": body.email}, {"$set": {"verified": True}, "$unset": {"otp": "", "otp_expires": ""}})
+    token = create_token(body.email)
+    user_data = await db.users.find_one({"email": body.email}, {"name": 1, "email": 1})
+    return {"token": token, "email": body.email, "name": user_data["name"]}
+
+@app.post("/api/auth/resend-otp")
+async def resend_otp(body: VerifyOtpRequest):
+    user = await db.users.find_one({"email": body.email})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if user.get("verified"):
+        raise HTTPException(status_code=400, detail="Already verified")
+    otp = generate_otp()
+    await db.users.update_one(
+        {"email": body.email},
+        {"$set": {"otp": otp, "otp_expires": datetime.now(timezone.utc) + timedelta(minutes=5)}},
+    )
+    await send_otp_email(body.email, otp)
+    return {"message": "OTP resent"}
 
 @app.post("/api/auth/login")
 async def login(body: LoginRequest):
-    user = await db.users.find_one({"username": body.username})
+    user = await db.users.find_one({"email": body.email})
     if not user or not pwd_ctx.verify(body.password, user["password"]):
         raise HTTPException(status_code=401, detail="Invalid credentials")
-    token = create_token(body.username)
-    return {"token": token, "username": body.username}
+    if not user.get("verified"):
+        raise HTTPException(status_code=403, detail="Email not verified")
+    token = create_token(body.email)
+    return {"token": token, "email": body.email, "name": user["name"]}
 
 @app.get("/api/auth/verify")
-async def verify(username: str = Depends(get_current_user)):
-    return {"valid": True, "user": username}
+async def verify(email: str = Depends(get_current_user)):
+    user = await db.users.find_one({"email": email}, {"name": 1, "email": 1})
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+    return {"valid": True, "email": user["email"], "name": user["name"]}
 
 # --- Shell runner ---
 
@@ -156,18 +243,18 @@ async def run_shell(cmd: str) -> Dict[str, str]:
 # --- Protected endpoints ---
 
 @app.get("/api/deploy")
-async def deploy_server(username: str = Depends(get_current_user)):
-    logger.info(f"{username} ran deploy")
+async def deploy_server(email: str = Depends(get_current_user)):
+    logger.info(f"{email} ran deploy")
     return await run_shell(COMMANDS["deploy"])
 
 @app.get("/api/configure")
-async def configure(username: str = Depends(get_current_user)):
-    logger.info(f"{username} ran configure")
+async def configure(email: str = Depends(get_current_user)):
+    logger.info(f"{email} ran configure")
     return await run_shell(COMMANDS["configure"])
 
 @app.get("/api/launch")
-async def launch(username: str = Depends(get_current_user)):
-    logger.info(f"{username} ran launch")
+async def launch(email: str = Depends(get_current_user)):
+    logger.info(f"{email} ran launch")
     result = await run_shell(COMMANDS["launch"])
     if result["status"] == "success":
         cid = result["message"][:12]
@@ -180,7 +267,7 @@ async def launch(username: str = Depends(get_current_user)):
     return result
 
 @app.get("/api/logs")
-async def get_logs(username: str = Depends(get_current_user), lines: int = Query(50, le=500)):
+async def get_logs(email: str = Depends(get_current_user), lines: int = Query(50, le=500)):
     try:
         with open(LOG_FILE, "r", encoding="utf-8") as f:
             all_lines = f.readlines()
@@ -190,10 +277,11 @@ async def get_logs(username: str = Depends(get_current_user), lines: int = Query
     return {"status": "success", "message": "".join(tail).rstrip()}
 
 @app.get("/api/containers")
-async def list_containers(username: str = Depends(get_current_user)):
-    result = await run_shell(f"{docker_prefix}docker ps --format '{{.Names}}|{{.ID}}|{{.Image}}|{{.Status}}'")
+async def list_containers(email: str = Depends(get_current_user)):
+    result = await run_shell(f"{docker_prefix}docker ps --format '{{.Names}}|{{.ID}}|{{.Image}}|{{.Status}}' 2>&1")
     if result["status"] == "error":
-        return {"containers": []}
+        logger.warning(f"docker ps failed: {result['message']}")
+        return {"containers": [], "error": result["message"]}
     containers = []
     for line in result["message"].split("\n"):
         parts = line.strip().split("|")
@@ -205,7 +293,7 @@ async def list_containers(username: str = Depends(get_current_user)):
     return {"containers": containers}
 
 @app.post("/api/containers/remove")
-async def remove_container(body: RemoveRequest, username: str = Depends(get_current_user)):
+async def remove_container(body: RemoveRequest, email: str = Depends(get_current_user)):
     return await run_shell(f"{docker_prefix}docker rm -f {body.name}")
 
 @app.get("/api/health")

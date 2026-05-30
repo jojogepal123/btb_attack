@@ -4,3 +4,4 @@ python-dotenv
 motor
 passlib
 python-jose[cryptography]
+aiosmtplib
