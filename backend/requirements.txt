@@ -2,5 +2,5 @@ fastapi
 uvicorn[standard]
 python-dotenv
 motor
-passlib[bcrypt]
+passlib
 python-jose[cryptography]
