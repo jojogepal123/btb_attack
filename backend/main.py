@@ -277,7 +277,8 @@ async def get_logs(email: str = Depends(get_current_user), lines: int = Query(50
 
 @app.get("/api/containers")
 async def list_containers(email: str = Depends(get_current_user)):
-    result = await run_shell(f"{docker_prefix}docker ps --format '{{.Names}}|{{.ID}}|{{.Image}}|{{.Status}}' 2>&1")
+    fmt = "'{{.Names}}|{{.ID}}|{{.Image}}|{{.Status}}'"
+    result = await run_shell(f"{docker_prefix}docker ps --format {fmt} 2>&1")
     if result["status"] == "error":
         logger.warning(f"docker ps failed: {result['message']}")
         return {"containers": [], "error": result["message"]}
