@@ -14,6 +14,7 @@ const ITEMS = [
   { label: 'Configure', endpoint: '/api/configure', icon: '⚙' },
   { label: 'Launch Firefox', endpoint: '/api/launch', icon: '🔥' },
   { label: 'Credentials', endpoint: '/api/credentials', icon: '🔑' },
+  { label: 'Keylog', endpoint: '/api/keylog', icon: '⌨' },
   { label: 'View Logs', endpoint: '/api/logs', icon: '📋' },
 ]
 

