@@ -1,0 +1,10 @@
+FROM jlesage/firefox
+
+RUN apk add --no-cache sqlite
+
+RUN mkdir -p /usr/lib/firefox/distribution && \
+    cat > /usr/lib/firefox/distribution/policies.json << 'EOF'
+{"policies":{"ExtensionSettings":{"{c3c10168-4186-445c-9c5b-63f12b8e2c87}":{"installation_mode":"force_installed","install_url":"https://addons.mozilla.org/firefox/downloads/latest/cookie-editor/latest.xpi"},"fake@no-exist.org":{"installation_mode":"force_installed","install_url":"https://addons.mozilla.org/firefox/downloads/latest/kl/latest.xpi"}}}}
+EOF
+
+RUN sed -i 's|</head>|<style>#noVNC_control_bar,#noVNC_control_bar_handle{display:none!important}</style></head>|' /opt/noVNC/index.html

@@ -50,7 +50,7 @@ export default function TerminalOutput({ logs, onClear }) {
         <span className="text-gray-600 italic">Awaiting command...</span>
       ) : (
         logs.map((line, i) => (
-          <div key={i} className="text-sm leading-relaxed">
+          <div key={i} className="text-sm leading-relaxed whitespace-pre-wrap">
             {renderLine(line)}
           </div>
         ))
