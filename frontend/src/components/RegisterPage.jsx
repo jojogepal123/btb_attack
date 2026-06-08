@@ -12,7 +12,7 @@ export default function RegisterPage({ onRegister, onBack }) {
     e.preventDefault()
     setError('')
     if (password !== confirm) { setError('Passwords do not match'); return }
-    if (password.length < 4) { setError('Password too short (min 4 chars)'); return }
+    if (password.length < 8) { setError('Password too short (min 8 chars)'); return }
     setBusy(true)
     try {
       await onRegister(name, email, password)

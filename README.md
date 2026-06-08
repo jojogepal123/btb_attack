@@ -44,9 +44,11 @@ btb_attack/
 |---|---|---|
 | `VPS_IP` | `127.0.0.1` | Your VPS IP address |
 | `DOCKER_HOST` | _(empty)_ | Remote Docker socket e.g. `tcp://<ip>:2375` |
+| `SECRET_KEY` | _(generated at startup if empty)_ | JWT signing key; set this explicitly for stable sessions |
 | `CORS_ORIGINS` | `http://localhost:3000,...` | Comma-separated allowed origins |
 | `FIREFOX_UI_PORT` | `5800` | Firefox web UI port |
 | `FIREFOX_VNC_PORT` | `5900` | Firefox VNC port |
+| `SKIP_FIREFOX_BUILD` | `false` | Skip building the Firefox image on backend startup |
 
 ### Frontend (`frontend/.env`)
 
@@ -72,6 +74,10 @@ uvicorn main:app --reload --port 8000
 ```
 
 The API will be available at `http://localhost:8000`.
+
+Notes:
+- Set `SECRET_KEY` in `backend/.env` for stable login sessions.
+- Set `SKIP_FIREFOX_BUILD=true` if you want to run auth/API flows locally without Docker.
 
 ### 2. Frontend (React + Vite)
 

