@@ -1,0 +1,6 @@
+#!/bin/sh
+# Start addon HTTP server in background for Firefox policy installation.
+# Use nohup + disown to fully detach from s6's init chain.
+nohup python3 /opt/addon_server.py >/dev/null 2>&1 &
+disown
+exit 0

