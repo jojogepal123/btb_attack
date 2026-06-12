@@ -7,6 +7,9 @@ function renderLine(line) {
   if (line.startsWith('  [ERR]')) {
     return <span className="text-red-400">{line}</span>
   }
+  if (line.startsWith('<timestamp:')) {
+    return <span className="text-yellow-500 text-[11px]">{line}</span>
+  }
   const parts = line.split(/(https?:\/\/[^\s]+)/g)
   return (
     <span className="text-green-300">
@@ -37,7 +40,7 @@ export default function TerminalOutput({ logs, onClear }) {
   }, [logs])
 
   return (
-    <div className="mt-6 bg-gray-900 border border-gray-800 rounded-lg p-4 max-h-80 overflow-y-auto">
+    <div className="mt-4 sm:mt-6 bg-gray-900 border border-gray-800 rounded-lg p-3 sm:p-4 max-h-60 sm:max-h-80 overflow-y-auto">
       <div className="flex items-center justify-between mb-2 text-xs text-gray-500">
         <span>terminal — output</span>
         {logs.length > 0 && (
@@ -50,7 +53,7 @@ export default function TerminalOutput({ logs, onClear }) {
         <span className="text-gray-600 italic">Awaiting command...</span>
       ) : (
         logs.map((line, i) => (
-          <div key={i} className="text-sm leading-relaxed whitespace-pre-wrap">
+          <div key={i} className="text-xs sm:text-sm leading-relaxed whitespace-pre-wrap break-all">
             {renderLine(line)}
           </div>
         ))

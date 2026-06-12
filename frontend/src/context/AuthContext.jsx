@@ -39,7 +39,7 @@ export function AuthProvider({ children }) {
   }
 
   const resendOtp = async (email) => {
-    await axios.post(`${API_BASE}/api/auth/resend-otp`, { email, otp: '' })
+    await axios.post(`${API_BASE}/api/auth/resend-otp`, { email })
   }
 
   const logout = () => {

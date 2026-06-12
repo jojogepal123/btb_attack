@@ -2,6 +2,8 @@ services:
   mongodb:
     image: mongo:7
     restart: unless-stopped
+    ports:
+      - "27018:27017"
     volumes:
       - mongo_data:/data/db
 
@@ -10,11 +12,10 @@ services:
     restart: unless-stopped
     depends_on:
       - mongodb
+    env_file:
+      - ./backend/.env
     environment:
       - MONGO_URL=mongodb://mongodb:27017
-      - VPS_IP=${VPS_IP:-127.0.0.1}
-      - DOCKER_HOST=${DOCKER_HOST:-}
-      - SECRET_KEY=${SECRET_KEY:-}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     ports:
