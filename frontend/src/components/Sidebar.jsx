@@ -200,7 +200,7 @@ function PhishletSettingsModal({ phishlet, onClose, onRun }) {
   )
 }
 
-export default function Sidebar({ onRun, loading, onOpenBrowser, onClose }) {
+export default function Sidebar({ onRun, loading, onOpenBrowser, onContainerRemoved, onClose }) {
   const { user, logout } = useAuth()
   const [showPhishlets, setShowPhishlets] = useState(false)
   const [phishlets, setPhishlets] = useState([])
@@ -250,9 +250,11 @@ export default function Sidebar({ onRun, loading, onOpenBrowser, onClose }) {
     onOpenBrowser(url, label)
   }
 
-  const handlePhishletRemove = (name, label) => {
+  const handlePhishletRemove = (name, label, port) => {
     setShowPhishlets(false)
-    onRun(`Remove ${label}`, `/api/containers/remove`, { name })
+    onRun(`Remove ${label}`, `/api/containers/remove`, { name }).then(() => {
+      onContainerRemoved(port)
+    })
   }
 
   const handleRebuildImage = () => {
@@ -336,7 +338,7 @@ export default function Sidebar({ onRun, loading, onOpenBrowser, onClose }) {
                             Open
                           </button>
                           <button
-                            onClick={() => handlePhishletRemove(p.name, p.label)}
+                            onClick={() => handlePhishletRemove(p.name, p.label, p.port)}
                             className="text-[10px] px-2 py-0.5 rounded bg-red-800 text-red-200 hover:bg-red-700 transition"
                           >
                             Remove

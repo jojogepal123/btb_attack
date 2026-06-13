@@ -96,6 +96,18 @@ export default function Dashboard() {
     })
   }, [activeTabId])
 
+  const closeTabsByPort = useCallback((port) => {
+    setTabs((prev) => {
+      const remaining = prev.filter((t) => !t.url.includes(`:${port}`))
+      if (remaining.length === 0) {
+        setActiveTabId(null)
+      } else if (!remaining.find((t) => t.id === activeTabId)) {
+        setActiveTabId(remaining[remaining.length - 1].id)
+      }
+      return remaining
+    })
+  }, [activeTabId])
+
   const activeTab = tabs.find((t) => t.id === activeTabId)
 
   return (
@@ -116,6 +128,7 @@ export default function Dashboard() {
           onRun={run}
           loading={loading}
           onOpenBrowser={addTab}
+          onContainerRemoved={closeTabsByPort}
           onClose={() => setSidebarOpen(false)}
         />
       </div>
