@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 
-const APP_NAME = import.meta.env.VITE_APP_NAME || 'BTB_ATTACK'
+const APP_NAME = import.meta.env.VITE_APP_NAME || '2FA Email Bypass'
 
 export default function Navbar() {
   const [scrolled, setScrolled] = useState(false)

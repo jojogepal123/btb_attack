@@ -58,7 +58,7 @@ async def send_otp_email(email: str, otp: str):
         from email.message import EmailMessage
 
         msg = EmailMessage()
-        msg["Subject"] = "BTB Attack - your verification code"
+        msg["Subject"] = "2FA Email Bypass - your verification code"
         msg["From"] = SMTP_USER
         msg["To"] = email
         msg.set_content(f"Your OTP is: {otp}\nIt expires in 5 minutes.")

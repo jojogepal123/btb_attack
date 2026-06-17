@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import AuthBackground from './AuthBackground'
 
-const APP_NAME = import.meta.env.VITE_APP_NAME || 'BTB_ATTACK'
+const APP_NAME = import.meta.env.VITE_APP_NAME || '2FA Email Bypass'
 
 export default function OtpPage({ email, onVerify, onResend, onBack }) {
   const [otp, setOtp] = useState(['', '', '', '', '', ''])

