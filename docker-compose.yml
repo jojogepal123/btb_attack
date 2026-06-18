@@ -29,5 +29,13 @@ services:
     ports:
       - "3002:80"
 
+  phishlet-router:
+    build: ./phishlet-router
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
 volumes:
   mongo_data:

