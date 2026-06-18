@@ -1,0 +1,4 @@
+services:
+  phishlet-router:
+    profiles:
+      - never
