@@ -24,7 +24,6 @@ function PhishletSettingsModal({ phishlet, onClose, onRun }) {
   const [saving, setSaving] = useState(false);
   const [saveStatus, setSaveStatus] = useState("");
   const [restarting, setRestarting] = useState(false);
-  const pollRef = useRef(null);
 
   useEffect(() => {
     axios
@@ -36,18 +35,36 @@ function PhishletSettingsModal({ phishlet, onClose, onRun }) {
   }, [phishlet.key]);
 
   useEffect(() => {
+    let cancelled = false;
+    let timer = null;
+    let interval = 3000;
+    const BASE_INTERVAL = 3000;
+    const MAX_INTERVAL = 24000;
+
     function fetchVisits() {
+      if (cancelled) return;
       axios
         .get(`${BASE}/api/phishlets/visits`, {
           params: { key: phishlet.key, limit: 20 },
           headers: authHeaders(),
         })
-        .then((res) => setVisits(res.data.visits || []))
-        .catch(() => {});
+        .then((res) => {
+          if (cancelled) return;
+          setVisits(res.data.visits || []);
+          interval = BASE_INTERVAL;
+          timer = setTimeout(fetchVisits, interval);
+        })
+        .catch(() => {
+          if (cancelled) return;
+          interval = Math.min(interval * 2, MAX_INTERVAL);
+          timer = setTimeout(fetchVisits, interval);
+        });
     }
     fetchVisits();
-    pollRef.current = setInterval(fetchVisits, 3000);
-    return () => clearInterval(pollRef.current);
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
   }, [phishlet.key]);
 
   function handleSave() {

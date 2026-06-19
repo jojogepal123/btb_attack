@@ -40,8 +40,14 @@ export default function Dashboard() {
 
   useEffect(() => {
     let cancelled = false;
+    let timer = null;
+    let interval = 5000;
+    const BASE_INTERVAL = 5000;
+    const MAX_INTERVAL = 30000;
+
     async function poll() {
       const candidates = [];
+      let failed = false;
       await Promise.all(
         PHISHLET_KEYS.map((key) =>
           axios
@@ -53,7 +59,7 @@ export default function Dashboard() {
               const v = (res.data.visits || [])[0];
               if (v) candidates.push({ key, ...v });
             })
-            .catch(() => {}),
+            .catch(() => { failed = true; }),
         ),
       );
       if (cancelled) return;
@@ -63,12 +69,18 @@ export default function Dashboard() {
         return tb - ta;
       });
       setLastVisit(candidates[0] || null);
+
+      if (failed) {
+        interval = Math.min(interval * 2, MAX_INTERVAL);
+      } else {
+        interval = BASE_INTERVAL;
+      }
+      timer = setTimeout(poll, interval);
     }
     poll();
-    const t = setInterval(poll, 5000);
     return () => {
       cancelled = true;
-      clearInterval(t);
+      if (timer) clearTimeout(timer);
     };
   }, []);
 
