@@ -297,7 +297,7 @@ export default function Dashboard() {
                       ? `${BASE}/api/proxy?url=${encodeURIComponent(activeTab.url)}`
                       : activeTab?.url
                   }
-                  className="w-full flex-1 min-h-[300px] sm:min-h-[400px] bg-black"
+                  className="w-full flex-1 min-h-[300px] sm:min-h-[400px] bg-transparent"
                   title={activeTab?.label}
                   onError={() => setIframeError(true)}
                 />
