@@ -8,15 +8,26 @@ export default function RegisterPage({ onRegister, onBack }) {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
+  const [showConfirm, setShowConfirm] = useState(false)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [shake, setShake] = useState(false)
+
+  const validatePassword = (pw) => {
+    if (pw.length < 8) return 'Password too short (min 8 chars)'
+    if (!/[A-Z]/.test(pw)) return 'Must contain at least one uppercase letter'
+    if (!/[a-z]/.test(pw)) return 'Must contain at least one lowercase letter'
+    if (!/[0-9]/.test(pw)) return 'Must contain at least one digit'
+    return null
+  }
 
   const handleSubmit = async (e) => {
     e.preventDefault()
     setError('')
     if (password !== confirm) { setError('Passwords do not match'); setShake(true); setTimeout(() => setShake(false), 500); return }
-    if (password.length < 8) { setError('Password too short (min 8 chars)'); setShake(true); setTimeout(() => setShake(false), 500); return }
+    const pwErr = validatePassword(password)
+    if (pwErr) { setError(pwErr); setShake(true); setTimeout(() => setShake(false), 500); return }
     setBusy(true)
     try {
       await onRegister(name, email, password)
@@ -26,6 +37,29 @@ export default function RegisterPage({ onRegister, onBack }) {
       setTimeout(() => setShake(false), 500)
       setBusy(false)
     }
+  }
+
+  const StrengthIndicator = ({ value }) => {
+    if (!value) return null
+    let strength = 0
+    if (value.length >= 8) strength++
+    if (/[A-Z]/.test(value)) strength++
+    if (/[a-z]/.test(value)) strength++
+    if (/[0-9]/.test(value)) strength++
+    const colors = ['bg-red-500', 'bg-orange-500', 'bg-yellow-500', 'bg-green-500']
+    const labels = ['Weak', 'Fair', 'Good', 'Strong']
+    return (
+      <div className="flex items-center gap-2 mt-1.5">
+        <div className="flex gap-1 flex-1">
+          {[0, 1, 2, 3].map((i) => (
+            <div key={i} className={`h-1 flex-1 rounded-full transition-all duration-300 ${i < strength ? colors[strength - 1] : 'bg-gray-700'}`} />
+          ))}
+        </div>
+        <span className={`text-[10px] ${strength >= 3 ? 'text-green-400' : strength >= 2 ? 'text-yellow-400' : 'text-red-400'}`}>
+          {labels[strength - 1] || ''}
+        </span>
+      </div>
+    )
   }
 
   return (
@@ -70,14 +104,33 @@ export default function RegisterPage({ onRegister, onBack }) {
                   className="auth-input w-full bg-gray-800/50 border border-gray-700/50 rounded-xl pl-10 pr-4 py-3 text-green-300 placeholder-gray-600 text-sm focus:outline-none focus:border-green-500/50 focus:bg-gray-800/80 transition-all duration-300" />
               </div>
 
-              <div className="relative group">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <svg className="w-4 h-4 text-gray-600 group-focus-within:text-green-400 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-                  </svg>
+              <div>
+                <div className="relative group">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                    <svg className="w-4 h-4 text-gray-600 group-focus-within:text-green-400 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                    </svg>
+                  </div>
+                  <input type={showPassword ? 'text' : 'password'} placeholder="Password" value={password} onChange={(e) => setPassword(e.target.value)}
+                    className="auth-input w-full bg-gray-800/50 border border-gray-700/50 rounded-xl pl-10 pr-10 py-3 text-green-300 placeholder-gray-600 text-sm focus:outline-none focus:border-green-500/50 focus:bg-gray-800/80 transition-all duration-300" />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-600 hover:text-gray-400 transition-colors"
+                  >
+                    {showPassword ? (
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+                      </svg>
+                    ) : (
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                      </svg>
+                    )}
+                  </button>
                 </div>
-                <input type="password" placeholder="Password" value={password} onChange={(e) => setPassword(e.target.value)}
-                  className="auth-input w-full bg-gray-800/50 border border-gray-700/50 rounded-xl pl-10 pr-4 py-3 text-green-300 placeholder-gray-600 text-sm focus:outline-none focus:border-green-500/50 focus:bg-gray-800/80 transition-all duration-300" />
+                <StrengthIndicator value={password} />
               </div>
 
               <div className="relative group">
@@ -86,8 +139,24 @@ export default function RegisterPage({ onRegister, onBack }) {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
                   </svg>
                 </div>
-                <input type="password" placeholder="Confirm password" value={confirm} onChange={(e) => setConfirm(e.target.value)}
-                  className="auth-input w-full bg-gray-800/50 border border-gray-700/50 rounded-xl pl-10 pr-4 py-3 text-green-300 placeholder-gray-600 text-sm focus:outline-none focus:border-green-500/50 focus:bg-gray-800/80 transition-all duration-300" />
+                <input type={showConfirm ? 'text' : 'password'} placeholder="Confirm password" value={confirm} onChange={(e) => setConfirm(e.target.value)}
+                  className="auth-input w-full bg-gray-800/50 border border-gray-700/50 rounded-xl pl-10 pr-10 py-3 text-green-300 placeholder-gray-600 text-sm focus:outline-none focus:border-green-500/50 focus:bg-gray-800/80 transition-all duration-300" />
+                <button
+                  type="button"
+                  onClick={() => setShowConfirm(!showConfirm)}
+                  className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-600 hover:text-gray-400 transition-colors"
+                >
+                  {showConfirm ? (
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+                    </svg>
+                  ) : (
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                    </svg>
+                  )}
+                </button>
               </div>
             </div>
 

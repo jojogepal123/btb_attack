@@ -1,12 +1,8 @@
 import { useState } from 'react'
 import axios from 'axios'
+import authHeaders from '../utils/authHeaders'
 
 const BASE = import.meta.env.VITE_API_URL || ''
-
-function authHeaders() {
-  const token = localStorage.getItem('btb_token')
-  return token ? { Authorization: `Bearer ${token}` } : {}
-}
 
 export default function useAsyncAction() {
   const [loading, setLoading] = useState({})

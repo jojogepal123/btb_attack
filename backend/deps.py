@@ -1,5 +1,7 @@
 import os
+import hmac
 import logging
+import secrets
 from typing import Optional
 
 from fastapi import Header, HTTPException
@@ -34,9 +36,11 @@ def set_db(new_client, new_db):
 
 SECRET_KEY = os.getenv("SECRET_KEY")
 if not SECRET_KEY:
-    import secrets as _secrets
-    SECRET_KEY = _secrets.token_urlsafe(32)
-    logger.warning("SECRET_KEY is not set; using an ephemeral key. Sessions will reset on restart.")
+    SECRET_KEY = secrets.token_urlsafe(32)
+    logger.warning(
+        "SECRET_KEY is not set; using an ephemeral key. "
+        "Sessions will reset on restart. Set SECRET_KEY in your environment."
+    )
 
 ALGORITHM = "HS256"
 
@@ -44,8 +48,31 @@ ALGORITHM = "HS256"
 async def get_current_user(authorization: Optional[str] = Header(None)):
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Not authenticated")
+    token = authorization.split(" ", 1)[1]
     try:
-        payload = jwt.decode(authorization.split(" ", 1)[1], SECRET_KEY, algorithms=[ALGORITHM])
-        return payload["sub"]
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+    email = payload.get("sub")
+    if not email:
+        raise HTTPException(status_code=401, detail="Invalid token payload")
+
+    if db is not None:
+        blacklisted = await db.token_blacklist.find_one({"token": token})
+        if blacklisted:
+            raise HTTPException(status_code=401, detail="Token has been revoked")
+
+    return email
+
+
+def verify_otp_hash(otp: str, otp_hash: str) -> bool:
+    """Timing-safe comparison of OTP against its bcrypt hash."""
+    import bcrypt
+    return bcrypt.checkpw(otp.encode(), otp_hash.encode())
+
+
+def hash_otp(otp: str) -> str:
+    """Hash an OTP with bcrypt for secure storage."""
+    import bcrypt
+    return bcrypt.hashpw(otp.encode(), bcrypt.gensalt()).decode()

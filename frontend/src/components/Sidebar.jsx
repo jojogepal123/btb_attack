@@ -3,13 +3,9 @@ import { createPortal } from "react-dom";
 import axios from "axios";
 import { useAuth } from "../context/AuthContext";
 import { phishletUrl } from "../hooks/phishletUrl";
+import authHeaders from "../utils/authHeaders";
 
 const BASE = import.meta.env.VITE_API_URL || "";
-
-function authHeaders() {
-  const token = localStorage.getItem("btb_token");
-  return token ? { Authorization: `Bearer ${token}` } : {};
-}
 
 const ITEMS = [
   { label: "Deploy Server", endpoint: "/api/deploy", icon: "🖥" },
