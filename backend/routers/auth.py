@@ -44,7 +44,6 @@ def _is_rate_limited(store: dict, key: str) -> bool:
     store[key] = [t for t in entries if now - t < _RATE_WINDOW]
     if len(store[key]) >= _MAX_LOGIN_ATTEMPTS:
         return True
-    store[key].append(now)
     return False
 
 
