@@ -4,15 +4,70 @@ import axios from "axios";
 import { useAuth } from "../context/AuthContext";
 import { phishletUrl } from "../hooks/phishletUrl";
 import authHeaders from "../utils/authHeaders";
+import CredentialsModal from "./CredentialsModal";
 
 const BASE = import.meta.env.VITE_API_URL || "";
 
 const ITEMS = [
-  { label: "Deploy Server", endpoint: "/api/deploy", icon: "🖥" },
-  { label: "Configure", endpoint: "/api/configure", icon: "⚙" },
-  { label: "Credentials", endpoint: "/api/credentials", icon: "🔑" },
-  { label: "View Logs", endpoint: "/api/logs", icon: "📋" },
+  { label: "View Logs", endpoint: "/api/logs", icon: "terminal" },
 ];
+
+function NavIcon({ name, className = "w-4 h-4" }) {
+  const icons = {
+    server: (
+      <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01" />
+      </svg>
+    ),
+    settings: (
+      <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+      </svg>
+    ),
+    terminal: (
+      <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+      </svg>
+    ),
+    key: (
+      <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+      </svg>
+    ),
+    target: (
+      <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="10" strokeWidth={2} />
+        <circle cx="12" cy="12" r="6" strokeWidth={2} />
+        <circle cx="12" cy="12" r="2" fill="currentColor" strokeWidth={0} />
+      </svg>
+    ),
+    browser: (
+      <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
+      </svg>
+    ),
+    tools: (
+      <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+      </svg>
+    ),
+    logout: (
+      <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+      </svg>
+    ),
+  };
+  return icons[name] || null;
+}
+
+function SidebarIcon({ icon, className = "w-4 h-4" }) {
+  if (icon.startsWith("svg:")) {
+    return null;
+  }
+  return <NavIcon name={icon} className={className} />;
+}
 
 function PhishletSettingsModal({ phishlet, onClose, onRun }) {
   const [redirectUrl, setRedirectUrl] = useState("");
@@ -238,6 +293,8 @@ export default function Sidebar({
   const [pausingPhishlet, setPausingPhishlet] = useState(null);
   const [pauseUrl, setPauseUrl] = useState("");
   const [pausing, setPausing] = useState(false);
+  const [showCredentials, setShowCredentials] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
   const phishletRef = useRef(null);
 
   useEffect(() => {
@@ -369,58 +426,82 @@ export default function Sidebar({
   };
 
   return (
-    <aside className="w-56 bg-gray-900 border-r border-gray-800 flex flex-col shrink-0 h-full">
-      <div className="px-4 py-5 border-b border-gray-800 flex items-center justify-between">
-        <div>
-          <h1 className="text-lg font-bold text-green-400 tracking-widest drop-shadow-[0_0_6px_rgba(34,197,94,0.4)]">
-            {import.meta.env.VITE_APP_NAME || "2FA Email Bypass"}
-          </h1>
-          <p className="text-[10px] text-gray-600 mt-0.5">
-            v1.0 — security simulator
-          </p>
-        </div>
-        {onClose && (
+    <aside className={`bg-gray-900 border-r border-gray-800 flex flex-col shrink-0 h-full transition-all duration-200 ${collapsed ? 'w-14' : 'w-56'}`}>
+      <div className={`px-4 py-5 border-b border-gray-800 flex items-center ${collapsed ? 'justify-center' : 'justify-between'}`}>
+        {!collapsed && (
+          <div>
+            <h1 className="text-lg font-bold text-green-400 tracking-widest drop-shadow-[0_0_6px_rgba(34,197,94,0.4)]">
+              {import.meta.env.VITE_APP_NAME || "2FA Email Bypass"}
+            </h1>
+            <p className="text-[10px] text-gray-600 mt-0.5">
+              v1.0 — security simulator
+            </p>
+          </div>
+        )}
+        <div className="flex items-center gap-1">
           <button
-            onClick={onClose}
-            className="lg:hidden text-gray-500 hover:text-green-400 transition p-1"
+            onClick={() => setCollapsed(!collapsed)}
+            className="text-gray-500 hover:text-green-400 transition p-1"
+            title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
           >
-            <svg
-              className="w-5 h-5"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M6 18L18 6M6 6l12 12"
-              />
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={collapsed ? "M13 5l7 7-7 7M5 5l7 7-7 7" : "M11 19l-7-7 7-7m8 14l-7-7 7-7"} />
             </svg>
           </button>
-        )}
+          {onClose && (
+            <button
+              onClick={onClose}
+              className="lg:hidden text-gray-500 hover:text-green-400 transition p-1"
+            >
+              <svg
+                className="w-5 h-5"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M6 18L18 6M6 6l12 12"
+                />
+              </svg>
+            </button>
+          )}
+        </div>
       </div>
 
-      <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
+      <nav className={`flex-1 overflow-y-auto ${collapsed ? 'p-1 space-y-1' : 'p-3 space-y-1'}`}>
         {ITEMS.map((item) => (
           <button
             key={item.label}
             onClick={() => onRun(item.label, item.endpoint)}
             disabled={loading[item.label]}
-            className="w-full flex items-center gap-3 px-3 py-2.5 rounded text-sm text-gray-400 hover:text-green-300 hover:bg-gray-800 transition disabled:opacity-40 disabled:cursor-not-allowed"
+            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded text-sm text-gray-400 hover:text-green-300 hover:bg-gray-800 transition disabled:opacity-40 disabled:cursor-not-allowed ${collapsed ? 'justify-center' : ''}`}
+            title={collapsed ? item.label : ''}
           >
-            <span className="text-xs">{item.icon}</span>
-            <span>{loading[item.label] ? `${item.label}...` : item.label}</span>
+            <NavIcon name={item.icon} className="w-4 h-4" />
+            {!collapsed && <span>{loading[item.label] ? `${item.label}...` : item.label}</span>}
           </button>
         ))}
+
+        <button
+          onClick={() => setShowCredentials(true)}
+          className={`w-full flex items-center gap-3 px-3 py-2.5 rounded text-sm text-gray-400 hover:text-yellow-300 hover:bg-gray-800 transition ${collapsed ? 'justify-center' : ''}`}
+          title={collapsed ? 'Credentials' : ''}
+        >
+          <NavIcon name="key" className="w-4 h-4" />
+          {!collapsed && <span>Credentials</span>}
+        </button>
 
         <div ref={phishletRef} className="relative">
           <button
             onClick={() => setShowPhishlets((v) => !v)}
-            className="w-full flex items-center gap-3 px-3 py-2.5 rounded text-sm text-gray-400 hover:text-yellow-300 hover:bg-gray-800 transition"
+            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded text-sm text-gray-400 hover:text-yellow-300 hover:bg-gray-800 transition ${collapsed ? 'justify-center' : ''}`}
+            title={collapsed ? 'Phishlets' : ''}
           >
-            <span className="text-xs">🎯</span>
-            <span>Phishlets</span>
+            <NavIcon name="target" className="w-4 h-4" />
+            {!collapsed && <span>Phishlets</span>}
           </button>
 
           {showPhishlets && (
@@ -443,12 +524,9 @@ export default function Sidebar({
                   >
                     <div className="flex items-center justify-between mb-1">
                       <span className="text-xs font-medium text-gray-200">
-                        {p.running ? (p.paused ? "⏸" : "🟢") : "🔴"} {p.label}
-                        {p.paused && (
-                          <span className="text-yellow-400 ml-1 text-[10px]">
-                            paused
-                          </span>
-                        )}
+                        <span className={`w-2 h-2 rounded-full ${p.running ? (p.paused ? 'bg-yellow-500' : 'bg-green-500') : 'bg-red-500'} ${p.paused ? 'ml-1' : ''}`} />
+
+                        {p.label}
                       </span>
                     </div>
                     <div className="flex items-center gap-1.5 flex-wrap">
@@ -513,25 +591,26 @@ export default function Sidebar({
                             }
                             title={
                               p.kiosk
-                                ? "Kiosk ON — click to show toolbar + extension icons"
-                                : "Kiosk OFF — click to go fullscreen"
+                                ? "Kiosk ON"
+                                : "Kiosk OFF"
                             }
-                            className={`text-[10px] px-2 py-0.5 rounded transition ${
+                            className={`text-[10px] px-2 py-0.5 rounded transition flex items-center gap-1 ${
                               p.kiosk
                                 ? "bg-purple-700 text-purple-200 hover:bg-purple-600"
                                 : "bg-gray-700 text-gray-200 hover:bg-gray-600"
                             }`}
                           >
-                            {p.kiosk ? "🖥 Kiosk" : "🧩 Toolbar"}
+                            <NavIcon name="browser" className="w-3 h-3" />
+                            {p.kiosk ? "Kiosk" : "Toolbar"}
                           </button>
                         </>
                       )}
                       <button
                         onClick={() => setSettingsPhishlet(p)}
-                        title="Settings (redirect URL + live activity)"
+                        title="Settings"
                         className="text-[10px] px-2 py-0.5 rounded bg-gray-700 text-gray-200 hover:bg-gray-600 transition"
                       >
-                        ⚙
+                        <NavIcon name="settings" className="w-3 h-3" />
                       </button>
                     </div>
                   </div>
@@ -548,35 +627,43 @@ export default function Sidebar({
               "Firefox",
             )
           }
-          className="w-full flex items-center gap-3 px-3 py-2.5 rounded text-sm text-gray-400 hover:text-green-300 hover:bg-gray-800 transition"
+          className={`w-full flex items-center gap-3 px-3 py-2.5 rounded text-sm text-gray-400 hover:text-green-300 hover:bg-gray-800 transition ${collapsed ? 'justify-center' : ''}`}
+          title={collapsed ? 'Open Firefox' : ''}
         >
-          <span className="text-xs">🌐</span>
-          <span>Open Firefox</span>
+          <NavIcon name="browser" className="w-4 h-4" />
+          {!collapsed && <span>Open Firefox</span>}
         </button>
 
         <button
           onClick={handleRebuildImage}
           disabled={loading["Rebuild Firefox Image"]}
-          className="w-full flex items-center gap-3 px-3 py-2.5 rounded text-sm text-gray-400 hover:text-orange-300 hover:bg-gray-800 transition disabled:opacity-40 disabled:cursor-not-allowed"
+          className={`w-full flex items-center gap-3 px-3 py-2.5 rounded text-sm text-gray-400 hover:text-orange-300 hover:bg-gray-800 transition disabled:opacity-40 disabled:cursor-not-allowed ${collapsed ? 'justify-center' : ''}`}
+          title={collapsed ? 'Rebuild Image' : ''}
         >
-          <span className="text-xs">🔧</span>
-          <span>
-            {loading["Rebuild Firefox Image"]
-              ? "Rebuilding Image..."
-              : "Rebuild Image"}
-          </span>
+          <NavIcon name="tools" className="w-4 h-4" />
+          {!collapsed && (
+            <span>
+              {loading["Rebuild Firefox Image"]
+                ? "Rebuilding..."
+                : "Rebuild"}
+            </span>
+          )}
         </button>
       </nav>
 
-      <div className="p-3 border-t border-gray-800 space-y-2">
-        <p className="text-xs text-gray-600 truncate">
-          {user?.name || user?.email}
-        </p>
+      <div className={`border-t border-gray-800 ${collapsed ? 'p-2' : 'p-3 space-y-2'}`}>
+        {!collapsed && (
+          <p className="text-xs text-gray-600 truncate">
+            {user?.name || user?.email}
+          </p>
+        )}
         <button
           onClick={logout}
-          className="text-xs text-red-500 hover:text-red-400 transition"
+          className={`w-full flex items-center gap-2 px-2 py-2 rounded text-xs text-red-500 hover:text-red-400 transition ${collapsed ? 'justify-center' : ''}`}
+          title={collapsed ? 'logout' : ''}
         >
-          logout
+          <NavIcon name="logout" className="w-4 h-4" />
+          {!collapsed && <span>logout</span>}
         </button>
       </div>
 
@@ -646,6 +733,13 @@ export default function Sidebar({
               </div>
             </div>
           </div>
+        ),
+        document.body,
+      )}
+
+      {createPortal(
+        showCredentials && (
+          <CredentialsModal onClose={() => setShowCredentials(false)} />
         ),
         document.body,
       )}

@@ -7,6 +7,7 @@ import {
   useNavigate,
 } from "react-router-dom";
 import { AuthProvider, useAuth } from "./context/AuthContext";
+import { ToastProvider } from "./context/ToastContext";
 import LandingPage from "./components/LandingPage";
 import LoginPage from "./components/LoginPage";
 import RegisterPage from "./components/RegisterPage";
@@ -157,9 +158,11 @@ function AppRoutes() {
 export default function App() {
   return (
     <AuthProvider>
-      <BrowserRouter>
-        <AppRoutes />
-      </BrowserRouter>
+      <ToastProvider>
+        <BrowserRouter>
+          <AppRoutes />
+        </BrowserRouter>
+      </ToastProvider>
     </AuthProvider>
   );
 }

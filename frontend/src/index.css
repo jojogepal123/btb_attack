@@ -7,7 +7,12 @@ html {
 }
 
 body {
-  @apply bg-gray-950 text-green-400 font-mono;
+  @apply bg-gray-950 text-green-400;
+  font-family: 'Nunito', system-ui, -apple-system, sans-serif;
+}
+
+code, pre, .font-mono {
+  font-family: 'Fira Code', 'Courier New', monospace;
 }
 
 ::-webkit-scrollbar {
@@ -116,4 +121,19 @@ body {
 
 .auth-input:focus {
   animation: inputFocus 0.3s ease forwards;
+}
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateX(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.animate-slide-in {
+  animation: slideIn 0.3s ease-out forwards;
 }

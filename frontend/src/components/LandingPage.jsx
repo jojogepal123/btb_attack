@@ -37,34 +37,72 @@ function ScrollReveal({ children, className = '', delay = 0 }) {
   )
 }
 
+function FeatureIcon({ name, className = "w-6 h-6" }) {
+  const icons = {
+    target: (
+      <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="10" strokeWidth={2} />
+        <circle cx="12" cy="12" r="6" strokeWidth={2} />
+        <circle cx="12" cy="12" r="2" fill="currentColor" strokeWidth="0" />
+      </svg>
+    ),
+    chart: (
+      <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+      </svg>
+    ),
+    key: (
+      <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+      </svg>
+    ),
+    keyboard: (
+      <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
+      </svg>
+    ),
+    docker: (
+      <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" />
+      </svg>
+    ),
+    shield: (
+      <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+      </svg>
+    ),
+  };
+  return icons[name] || null;
+}
+
 const features = [
   {
-    icon: '🎯',
+    icon: 'target',
     title: 'Phishing Simulation',
     desc: 'Deploy convincing phishing pages with one click. Real-time victim tracking and analytics dashboard.',
   },
   {
-    icon: '📊',
+    icon: 'chart',
     title: 'Real-time Monitoring',
     desc: 'Watch victim activity as it happens. Live keystroke streams, page visits, and interaction heatmaps.',
   },
   {
-    icon: '🔑',
+    icon: 'key',
     title: 'Credential Harvesting',
     desc: 'Securely capture and store harvested credentials with full session management and metadata.',
   },
   {
-    icon: '⌨',
+    icon: 'keyboard',
     title: 'Keylogging Engine',
     desc: 'Advanced keystroke capture with timestamp precision. Supports all input types and special keys.',
   },
   {
-    icon: '🐳',
+    icon: 'docker',
     title: 'Docker Isolation',
     desc: 'Each phishing campaign runs in its own isolated container. Zero cross-contamination risk.',
   },
   {
-    icon: '🛡',
+    icon: 'shield',
     title: 'Security Testing',
     desc: 'Built for authorized penetration testing. Full audit trails, role-based access, and compliance tools.',
   },
@@ -283,8 +321,8 @@ export default function LandingPage() {
             {features.map((feat, i) => (
               <ScrollReveal key={feat.title} delay={i * 80}>
                 <div className="group p-6 rounded-xl bg-gray-900/50 border border-gray-800/50 hover:border-green-500/30 transition-all duration-300 hover:shadow-lg hover:shadow-green-900/20 hover:-translate-y-1">
-                  <div className="w-12 h-12 rounded-lg bg-green-500/10 border border-green-500/20 flex items-center justify-center text-2xl mb-4 group-hover:scale-110 transition-transform">
-                    {feat.icon}
+                  <div className="w-12 h-12 rounded-lg bg-green-500/10 border border-green-500/20 flex items-center justify-center text-green-400 mb-4 group-hover:scale-110 transition-transform">
+                    <FeatureIcon name={feat.icon} className="w-6 h-6" />
                   </div>
                   <h3 className="text-white font-semibold text-lg mb-2">{feat.title}</h3>
                   <p className="text-gray-500 text-sm leading-relaxed">{feat.desc}</p>
