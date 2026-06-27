@@ -294,6 +294,8 @@ export default function Sidebar({
   const [pauseUrl, setPauseUrl] = useState("");
   const [pausing, setPausing] = useState(false);
   const [showCredentials, setShowCredentials] = useState(false);
+  const [credentialsDropdown, setCredentialsDropdown] = useState(false);
+  const [credentialsPhishlet, setCredentialsPhishlet] = useState(null);
   const [collapsed, setCollapsed] = useState(false);
   const phishletRef = useRef(null);
 
@@ -318,6 +320,17 @@ export default function Sidebar({
     function handleClick(e) {
       if (phishletRef.current && !phishletRef.current.contains(e.target)) {
         setShowPhishlets(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, []);
+
+  const credentialsRef = useRef(null);
+  useEffect(() => {
+    function handleClick(e) {
+      if (credentialsRef.current && !credentialsRef.current.contains(e.target)) {
+        setCredentialsDropdown(false);
       }
     }
     document.addEventListener("mousedown", handleClick);
@@ -485,14 +498,44 @@ export default function Sidebar({
           </button>
         ))}
 
-        <button
-          onClick={() => setShowCredentials(true)}
-          className={`w-full flex items-center gap-3 px-3 py-2.5 rounded text-sm text-gray-400 hover:text-yellow-300 hover:bg-gray-800 transition ${collapsed ? 'justify-center' : ''}`}
-          title={collapsed ? 'Credentials' : ''}
-        >
-          <NavIcon name="key" className="w-4 h-4" />
-          {!collapsed && <span>Credentials</span>}
-        </button>
+        <div ref={credentialsRef} className="relative">
+          <button
+            onClick={() => setCredentialsDropdown((v) => !v)}
+            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded text-sm text-gray-400 hover:text-yellow-300 hover:bg-gray-800 transition ${collapsed ? 'justify-center' : ''}`}
+            title={collapsed ? 'Credentials' : ''}
+          >
+            <NavIcon name="key" className="w-4 h-4" />
+            {!collapsed && <span>Credentials</span>}
+            {!collapsed && (
+              <svg className={`w-3 h-3 ml-auto transition-transform ${credentialsDropdown ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+              </svg>
+            )}
+          </button>
+
+          {credentialsDropdown && !collapsed && (
+            <div className="absolute left-0 right-0 top-full mt-1 bg-gray-800 border border-gray-700 rounded-lg shadow-lg z-10 overflow-hidden">
+              <button
+                onClick={() => { setCredentialsPhishlet(null); setShowCredentials(true); setCredentialsDropdown(false); }}
+                className="w-full px-3 py-2 text-xs text-gray-300 hover:bg-gray-700 hover:text-yellow-300 text-left flex items-center gap-2"
+              >
+                <NavIcon name="cookie" className="w-3 h-3" />
+                All Credentials
+              </button>
+              {/* {phishlets.map((p) => ( */}
+              {phishlets.filter(p => ["gmail"].includes(p.key)).map((p) => ( // TODO: uncomment above and remove filter after local testing
+                <button
+                  key={p.key}
+                  onClick={() => { setCredentialsPhishlet(p.key); setShowCredentials(true); setCredentialsDropdown(false); }}
+                  className="w-full px-3 py-2 text-xs text-gray-300 hover:bg-gray-700 hover:text-yellow-300 text-left flex items-center gap-2"
+                >
+                  <span className={`w-2 h-2 rounded-full ${p.login_detected ? 'bg-green-500' : (p.running ? 'bg-blue-500' : 'bg-gray-600')}`} />
+                  {p.label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
 
         <div ref={phishletRef} className="relative">
           <button
@@ -524,7 +567,7 @@ export default function Sidebar({
                   >
                     <div className="flex items-center justify-between mb-1">
                       <span className="text-xs font-medium text-gray-200">
-                        <span className={`w-2 h-2 rounded-full ${p.running ? (p.paused ? 'bg-yellow-500' : 'bg-green-500') : 'bg-red-500'} ${p.paused ? 'ml-1' : ''}`} />
+                        <span className={`w-2 h-2 rounded-full ${p.login_detected ? 'bg-green-500' : (p.running ? (p.paused ? 'bg-yellow-500' : 'bg-blue-500') : 'bg-red-500')} ${p.paused ? 'ml-1' : ''}`} />
 
                         {p.label}
                       </span>
@@ -739,7 +782,7 @@ export default function Sidebar({
 
       {createPortal(
         showCredentials && (
-          <CredentialsModal onClose={() => setShowCredentials(false)} />
+          <CredentialsModal onClose={() => setShowCredentials(false)} phishletKey={credentialsPhishlet} />
         ),
         document.body,
       )}

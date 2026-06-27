@@ -10,3 +10,7 @@ dist/
 .vite/
 *.log
 redirection_addon
+pathplan.md
+phishlet-flow.md
+nginx-phishlets.conf.snippet
+deploy.sh

